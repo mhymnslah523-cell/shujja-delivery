@@ -11,7 +11,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [, setShowSetup] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,16 +112,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             <span>{loading ? 'جاري التحقق...' : 'تسجيل الدخول للنظام'}</span>
           </button>
         </form>
-<div className="mt-4 text-center">
-  <button
-    type="button"
-    onClick={() => setShowSetup(true)}
-    className="text-xs text-amber-500 hover:text-amber-400 underline font-medium"
-  >
-    إعداد حساب القائد لأول مرة؟ اضغط هنا
-  </button>
-</div>
-
+   
         <div className="px-6 py-3 bg-amber-50/60 border-t border-amber-100 text-center text-[11px] text-slate-500">
           تطوير نظام إدارة شركات التوصيل © 2026
         </div>
