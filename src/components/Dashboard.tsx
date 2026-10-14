@@ -1,215 +1,285 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { toast } from "sonner";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { 
-  Archive, Barcode, Download, Layers, LogOut, MessageSquare, 
-  Package, Search, ShieldCheck, Truck, TrendingUp, Users, 
-  AlertTriangle, Plus, Clock, RotateCcw, FileSpreadsheet, 
-  Building2, UserX, Send, Check, ChevronRight, ChevronLeft, 
-  CalendarDays, Menu, X 
+  TrendingUp, Search, AlertTriangle, Truck, Package, 
+  Clock, Archive, RotateCcw, MessageSquare, FileSpreadsheet, 
+  Building2, UserX, Layers, ShieldCheck, CalendarDays, 
+  Users, LogOut, Barcode, Send, Check, 
+  PauseCircle, PlayCircle, RefreshCw, ChevronRight, ChevronLeft,
+  Menu, X
 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-import { cloudError } from "@/lib/cloud-errors";
-import { fetchPage, exportPages, PAGE_SIZE, type Shipment, type ShipmentFilter, type ShipmentTab } from "@/lib/shipments";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { loadIdentity } from "@/lib/leader-guard";
-import { toShipmentTab, normalizeBarcode, canManageStaff, type Role } from "@/lib/access";
+import { supabase } from "../lib/supabase";
 
-type Tab = ShipmentTab | "comments" | "stickers" | "users" | "schedule";
-const ROLE_LABELS: Record<Role, string> = { leader: "قائد", accountant: "محاسب", courier: "مندوب" };
-const ROLES: Role[] = ["courier", "accountant", "leader"];
-const STATUSES = ["غير مؤكد", "ب. مندوب الاستلام", "قيد التنفيذ", "بحوزة المندوب", "مؤجل", "تم التسليم", "راجع"];
-const COURIER_STATUSES = ["بحوزة المندوب", "مؤجل", "تم التسليم", "راجع"];
-const CITIES = ["الكل", "بغداد", "البصرة", "أربيل", "النجف", "كربلاء", "نينوى", "السليمانية", "بابل", "ديالى", "كركوك", "ذي قار"];
-const DAYS = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+export type UserRole = "leader" | "accountant" | "courier";
 
-const tabs: { id: Tab; label: string; icon: ReactNode; roles: Role[] }[] = [
-  { id: "home", label: "الرئيسية", icon: <TrendingUp className="size-4" />, roles: ROLES },
-  { id: "mine", label: "شحناتي", icon: <Truck className="size-4" />, roles: ["courier"] },
-  { id: "search", label: "البحث المتقدم", icon: <Search className="size-4" />, roles: ["leader", "accountant"] },
-  { id: "unconfirmed", label: "طلبات غير مؤكدة", icon: <AlertTriangle className="size-4" />, roles: ["leader"] },
-  { id: "pickup", label: "مندوب الاستلام", icon: <Truck className="size-4" />, roles: ["leader", "courier"] },
-  { id: "internal", label: "طلبات داخلية", icon: <Package className="size-4" />, roles: ["leader", "courier"] },
-  { id: "external", label: "طلبات خارجية", icon: <Truck className="size-4" />, roles: ["leader", "courier"] },
-  { id: "waiting", label: "قيد الانتظار", icon: <Clock className="size-4" />, roles: ["leader", "courier"] },
-  { id: "archives", label: "الأرشيف", icon: <Archive className="size-4" />, roles: ["leader", "accountant"] },
-  { id: "late", label: "طلبات متأخرة", icon: <RotateCcw className="size-4" />, roles: ["leader", "accountant"] },
-  { id: "comments", label: "الردود والملاحظات", icon: <MessageSquare className="size-4" />, roles: ["leader", "courier"] },
-  { id: "lists", label: "كشوفات الحساب", icon: <FileSpreadsheet className="size-4" />, roles: ["leader", "accountant"] },
-  { id: "branches", label: "تعديلات الفروع", icon: <Building2 className="size-4" />, roles: ["leader"] },
-  { id: "inactive", label: "عملاء غير فعالين", icon: <UserX className="size-4" />, roles: ["leader"] },
-  { id: "stickers", label: "توليد وصولات", icon: <Layers className="size-4" />, roles: ["leader"] },
-  { id: "verification", label: "قيد التحقق", icon: <ShieldCheck className="size-4" />, roles: ["leader", "courier"] },
-  { id: "schedule", label: "مواعيد العمل", icon: <CalendarDays className="size-4" />, roles: ["leader"] },
-  { id: "users", label: "إدارة الموظفين", icon: <Users className="size-4" />, roles: ["leader"] },
+export interface CurrentUserProfile {
+  id: string;
+  name: string;
+  username: string;
+  phone?: string;
+  role: UserRole;
+  stationName?: string;
+}
+
+export interface Shipment {
+  id: string;
+  waybill_number: string;
+  store_name: string;
+  store_phone?: string;
+  recipient_name: string;
+  recipient_phone: string;
+  city: string;
+  area: string;
+  amount: number;
+  delivery_fee: number;
+  net_amount?: number;
+  goods_type?: string;
+  pieces_count?: number;
+  status: string;
+  driver_id?: string;
+  driver_name?: string;
+  branch_name?: string;
+  notes?: string;
+  created_at?: string;
+  is_held?: boolean;
+  verified?: boolean;
+}
+
+type TabType = 
+  | "home" | "search" | "unconfirmed" | "pickup" | "internal" | "external" 
+  | "waiting" | "archives" | "late" | "comments" | "lists" | "branches" 
+  | "inactive" | "stickers" | "verification" | "schedule" | "staff";
+
+interface NavItem {
+  id: TabType;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  roles: UserRole[];
+}
+
+const ALL_ROLES: UserRole[] = ["leader", "accountant", "courier"];
+
+const NAVIGATION_ITEMS: NavItem[] = [
+  { id: "home", label: "الرئيسية", icon: TrendingUp, roles: ALL_ROLES },
+  { id: "search", label: "البحث المتقدم", icon: Search, roles: ["leader", "accountant"] },
+  { id: "unconfirmed", label: "طلبات غير مؤكدة", icon: AlertTriangle, roles: ["leader"] },
+  { id: "pickup", label: "مندوب الاستلام", icon: Truck, roles: ["leader", "courier"] },
+  { id: "internal", label: "طلبات داخلية", icon: Package, roles: ["leader", "courier"] },
+  { id: "external", label: "طلبات خارجية", icon: Truck, roles: ["leader", "courier"] },
+  { id: "waiting", label: "قيد الانتظار", icon: Clock, roles: ["leader", "courier"] },
+  { id: "archives", label: "الأرشيف", icon: Archive, roles: ["leader", "accountant"] },
+  { id: "late", label: "طلبات متأخرة", icon: RotateCcw, roles: ["leader", "accountant"] },
+  { id: "comments", label: "الردود والملاحظات", icon: MessageSquare, roles: ["leader", "courier"] },
+  { id: "lists", label: "كشوفات الحساب", icon: FileSpreadsheet, roles: ["leader", "accountant"] },
+  { id: "branches", label: "تعديلات الفروع", icon: Building2, roles: ["leader"] },
+  { id: "inactive", label: "عملاء غير فعالين", icon: UserX, roles: ["leader"] },
+  { id: "stickers", label: "توليد وصولات", icon: Layers, roles: ["leader"] },
+  { id: "verification", label: "قيد التحقق", icon: ShieldCheck, roles: ["leader", "courier"] },
+  { id: "schedule", label: "مواعيد العمل", icon: CalendarDays, roles: ["leader"] },
+  { id: "staff", label: "إدارة الموظفين", icon: Users, roles: ["leader"] },
 ];
 
-function whatsapp(phone: string, text: string) {
-  const clean = phone.replace(/\D/g, "");
-  const num = clean.startsWith("0") ? `964${clean.slice(1)}` : clean;
-  window.open(`https://wa.me/${num}?text=${encodeURIComponent(text)}`, "_blank");
-}
-
-function explain(err: unknown, fallback: string) {
-  const msg = err instanceof Error ? err.message : cloudError(fallback, err);
-  toast.error(msg);
-}
+const STATUS_LIST = ["غير مؤكد", "ب. مندوب الاستلام", "قيد التنفيذ", "بحوزة المندوب", "مؤجل", "تم التسليم", "راجع"];
 
 export function Dashboard() {
-  const qc = useQueryClient();
-  const [tab, setTab] = useState<Tab>("home");
-  const [page, setPage] = useState(0);
-  const [query, setQuery] = useState("");
-  const [store, setStore] = useState("");
-  const [city, setCity] = useState("الكل");
-  const [selected, setSelected] = useState<string[]>([]);
-  const [barcode, setBarcode] = useState("");
-  const [exporting, setExporting] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<CurrentUserProfile | null>(null);
+  const [activeTab, setActiveTab] = useState<TabType>("home");
+  const [loading, setLoading] = useState<boolean>(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
 
-  const me = useQuery({ queryKey: ["me"], queryFn: loadIdentity });
-  const role = me.data?.role;
-  const manager = role === "leader" || role === "accountant";
+  // شحنات
+  const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [totalCount, setTotalCount] = useState<number>(0);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [page, setPage] = useState<number>(0);
+  const pageSize = 25;
 
-  const shipmentTab = toShipmentTab(tab);
-  const filter: ShipmentFilter = { tab: shipmentTab, page, query, store, city, courierId: me.data?.id };
+  // فلاتر
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [barcodeInput, setBarcodeInput] = useState<string>("");
 
-  const list = useQuery({
-    queryKey: ["shipment-page", filter],
-    queryFn: () => fetchPage(filter),
-    enabled: Boolean(role && !["home", "comments", "stickers", "users", "schedule", "inactive"].includes(tab)),
-  });
+  // جلب المستخدم
+  useEffect(() => {
+    async function loadUser() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
 
-  const stats = useQuery({
-    queryKey: ["shipment-stats"],
-    queryFn: async () => {
-      const states = ["غير مؤكد", "قيد التنفيذ", "تم التسليم", "راجع"];
-      const results = await Promise.all([
-        supabase.from("shipments").select("id", { count: "exact", head: true }),
-        ...states.map((status) => supabase.from("shipments").select("id", { count: "exact", head: true }).eq("status", status))
-      ]);
-      return {
-        total: results[0].count ?? 0,
-        unconfirmed: results[1].count ?? 0,
-        transit: results[2].count ?? 0,
-        delivered: results[3].count ?? 0,
-        returned: results[4].count ?? 0,
-      };
-    },
-    enabled: tab === "home",
-  });
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("id, full_name, username, phone, station")
+          .eq("id", user.id)
+          .maybeSingle();
 
-  const couriers = useQuery({
-    queryKey: ["couriers"],
-    queryFn: async () => {
-      const { data } = await supabase.from("profiles").select("id, full_name").eq("role", "courier");
-      return data ?? [];
-    },
-    enabled: manager,
-  });
+        const { data: roleRow } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", user.id)
+          .maybeSingle();
 
-  const mutate = useMutation({
-    mutationFn: async ({ ids, changes }: { ids: string[]; changes: Record<string, unknown> }) => {
-      const { error } = await supabase.from("shipments").update(changes).in("id", ids);
+        const userRole = (roleRow?.role as UserRole) || "courier";
+
+        setCurrentUser({
+          id: user.id,
+          name: profile?.full_name || "مستخدم",
+          username: profile?.username || "user",
+          phone: profile?.phone || "",
+          role: userRole,
+          stationName: profile?.station || "المقر الرئيسي"
+        });
+      } catch (err) {
+        console.error("فشل تحميل بيانات المستخدم:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadUser();
+  }, []);
+
+  // جلب الشحنات
+  const fetchShipments = useCallback(async () => {
+    if (!currentUser) return;
+    setLoading(true);
+    try {
+      let query = supabase.from("shipments").select("*", { count: "exact" });
+
+      if (activeTab === "unconfirmed") query = query.eq("status", "غير مؤكد");
+      else if (activeTab === "pickup") query = query.eq("status", "ب. مندوب الاستلام");
+      else if (activeTab === "internal") query = query.eq("city_type", "داخلية");
+      else if (activeTab === "external") query = query.eq("city_type", "خارجية");
+      else if (activeTab === "waiting") query = query.eq("status", "مؤجل");
+      else if (activeTab === "archives") query = query.in("status", ["تم التسليم", "راجع"]);
+      else if (activeTab === "verification") query = query.eq("verified", false);
+
+      if (searchQuery.trim()) {
+        query = query.or(`waybill_number.ilike.%${searchQuery}%,recipient_name.ilike.%${searchQuery}%,recipient_phone.ilike.%${searchQuery}%`);
+      }
+
+      const from = page * pageSize;
+      const to = from + pageSize - 1;
+      const { data, count, error } = await query.order("created_at", { ascending: false }).range(from, to);
+
       if (error) throw error;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["shipment-page"] });
-      qc.invalidateQueries({ queryKey: ["shipment-stats"] });
-      setSelected([]);
-      toast.success("تم تحديث الشحنات بنجاح");
-    },
-    onError: (err) => explain(err, "shipment-update"),
-  });
+      setShipments(data || []);
+      setTotalCount(count || 0);
+    } catch (err) {
+      console.error("خطأ في جلب الشحنات:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [currentUser, activeTab, page, searchQuery]);
 
-  const rows = list.data?.rows ?? [];
-  const refresh = () => { qc.invalidateQueries({ queryKey: ["shipment-page"] }); qc.invalidateQueries({ queryKey: ["shipment-stats"] }); };
-  const changeTab = (t: Tab) => { setTab(t); setPage(0); setSelected([]); setMobileMenuOpen(false); };
+  useEffect(() => {
+    if (activeTab !== "home" && activeTab !== "staff") {
+      fetchShipments();
+    }
+  }, [fetchShipments, activeTab]);
 
-  const scan = async (e: FormEvent) => { 
-    e.preventDefault(); 
-    const code = normalizeBarcode(barcode); 
-    if (!code) return;
-    const { data, error } = await supabase.from("shipments").select("id").eq("waybill_number", code).maybeSingle();
-    if (error) explain(error, "scan"); 
-    else if (data) { 
-      setSelected((prev) => prev.includes(data.id) ? prev : [...prev, data.id]); 
-      toast.success(`تم تحديد الوصل ${code}`); 
-    } else toast.error("الوصل غير موجود أو غير متاح لك"); 
-    setBarcode("");
+  // مسح باركود
+  const handleBarcodeScan = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!barcodeInput.trim()) return;
+    const found = shipments.find(s => s.waybill_number.toLowerCase() === barcodeInput.trim().toLowerCase());
+    if (found) {
+      if (!selectedIds.includes(found.id)) setSelectedIds(prev => [...prev, found.id]);
+    } else {
+      setSearchQuery(barcodeInput.trim());
+      setPage(0);
+    }
+    setBarcodeInput("");
   };
 
-  const logout = async () => { 
-    await qc.cancelQueries(); 
-    qc.clear(); 
-    await supabase.auth.signOut(); 
-    window.location.reload(); 
+  // تغيير الحالة
+  const handleBulkStatusChange = async (status: string) => {
+    if (!selectedIds.length || !status) return;
+    try {
+      const { error } = await supabase.from("shipments").update({ status }).in("id", selectedIds);
+      if (error) throw error;
+      setSelectedIds([]);
+      fetchShipments();
+    } catch (err) {
+      console.error("فشل التحديث:", err);
+    }
   };
 
-  const download = async () => { 
-    setExporting(true); 
-    try { 
-      const ok = await exportPages(filter, tab === "lists" ? "settlement-shujaa.csv" : "shipments-shujaa.csv"); 
-      if (!ok) toast.error("لا توجد بيانات للتصدير"); 
-    } catch (e) { 
-      toast.error(e instanceof Error ? e.message : cloudError("export", e)); 
-    } finally { 
-      setExporting(false); 
-    } 
+  // تعليق الشحنة
+  const toggleHold = async (id: string, currentHeld?: boolean) => {
+    try {
+      const { error } = await supabase.from("shipments").update({ is_held: !currentHeld }).eq("id", id);
+      if (error) throw error;
+      fetchShipments();
+    } catch (err) {
+      console.error("فشل تغيير حالة التعليق:", err);
+    }
   };
 
-  const shown = tabs.filter((t) => role && t.roles.includes(role) && (t.id !== "users" || canManageStaff(role)));
-  useEffect(() => { if (role && !shown.some((item) => item.id === tab)) changeTab("home"); }, [role]);
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    window.location.reload();
+  };
 
-  if (me.isPending) return <p className="p-10 text-center text-muted-foreground">جارٍ التحميل...</p>;
-  if (me.isError) return <div className="p-10 text-center"><p>تعذّر التحقق من الحساب.</p><Button onClick={() => qc.invalidateQueries({ queryKey: ["me"] })}>إعادة المحاولة</Button></div>;
-  if (!role) return <div className="p-10 text-center space-y-4"><p>لا توجد صلاحية مرتبطة بحسابك. تواصل مع القائد.</p><Button onClick={logout}>خروج</Button></div>;
+  const allowedNav = useMemo(() => {
+    if (!currentUser) return [];
+    return NAVIGATION_ITEMS.filter(item => item.roles.includes(currentUser.role));
+  }, [currentUser]);
 
-  const visibleTable = !["home", "comments", "stickers", "users", "schedule", "inactive"].includes(tab);
+  const selectTab = (tabId: TabType) => {
+    setActiveTab(tabId);
+    setPage(0);
+    setSelectedIds([]);
+    setMobileMenuOpen(false);
+  };
 
   return (
-    <div dir="rtl" className="min-h-screen bg-background text-foreground font-sans pb-16">
-      {/* هيدر الصفحة */}
-      <header className="border-b-2 border-border bg-primary px-4 py-4 md:px-8">
-        <div className="mx-auto max-w-[1600px] flex items-center justify-between gap-4">
+    <div dir="rtl" className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col">
+      {/* الهيدر العلوي */}
+      <header className="bg-amber-400 border-b border-amber-500/30 px-4 py-3 sticky top-0 z-30 shadow-sm">
+        <div className="max-w-[1700px] mx-auto flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
-            {/* زر القائمة للشاشات الصغيرة */}
-            <button 
-              type="button" 
+            {/* زر القائمة للموبايل */}
+            <button
+              type="button"
               onClick={() => setMobileMenuOpen(true)}
-              className="lg:hidden p-2 rounded-md bg-primary-foreground/10 hover:bg-primary-foreground/20 text-primary-foreground transition-colors"
+              className="lg:hidden p-2 rounded-lg bg-amber-500/30 hover:bg-amber-500/50 text-slate-900 transition-colors"
               aria-label="فتح القائمة"
             >
-              <Menu className="size-6" />
+              <Menu className="w-6 h-6" />
             </button>
+            <div className="w-10 h-10 rounded-full bg-slate-900 text-amber-400 font-black flex items-center justify-center text-lg shadow-inner">
+              ش
+            </div>
             <div>
-              <p className="text-[10px] sm:text-xs font-bold text-primary-foreground/75">نظام التشغيل الموحد</p>
-              <h1 className="text-xl sm:text-2xl md:text-3xl font-extrabold text-primary-foreground">منصة الشجاع</h1>
-              <p className="text-xs text-primary-foreground/80">{me.data?.name} · {ROLE_LABELS[role]}</p>
+              <h1 className="text-lg font-extrabold text-slate-900 leading-tight">منصة الشجاع</h1>
+              <p className="text-xs font-semibold text-slate-800/80">نظام إدارة العمليات اللوجستية</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <form onSubmit={scan} className="hidden sm:flex items-center gap-2 border border-primary-foreground/30 bg-card p-1.5 rounded">
-              <Barcode className="size-5 text-muted-foreground" />
-              <Input 
-                aria-label="رقم الوصل" 
-                value={barcode} 
-                onChange={(e) => setBarcode(e.target.value)} 
-                placeholder="مسح باركود أو رقم وصل" 
-                className="w-36 border-0 bg-transparent shadow-none sm:w-48 text-xs" 
+            <form onSubmit={handleBarcodeScan} className="hidden sm:flex items-center gap-1 bg-white/90 px-2 py-1 rounded border border-amber-500/40 shadow-inner">
+              <Barcode className="w-4 h-4 text-slate-500" />
+              <input
+                type="text"
+                placeholder="مسح باركود أو بحث..."
+                value={barcodeInput}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBarcodeInput(e.target.value)}
+                className="bg-transparent border-none outline-none text-xs w-36 sm:w-48 text-slate-800"
               />
-              <Button type="submit" size="sm" variant="secondary">تحديد</Button>
+              <button type="submit" className="text-xs bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-2 py-0.5 rounded">
+                تحديد
+              </button>
             </form>
-            <Button variant="outline" size="sm" onClick={logout} className="gap-1.5">
-              <LogOut className="size-4" /> <span className="hidden sm:inline">خروج</span>
-            </Button>
+
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-900 text-amber-400 hover:bg-slate-800 text-xs font-bold transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">خروج</span>
+            </button>
           </div>
         </div>
       </header>
 
-      {/* القائمة الجانبية السلسة للهواتف (Drawer) */}
+      {/* القائمة المنزلقة السلسة للهواتف */}
       <div 
         className={`fixed inset-0 z-50 lg:hidden transition-opacity duration-300 ${
           mobileMenuOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
@@ -218,376 +288,292 @@ export function Dashboard() {
         {/* خلفية معتمة ناعمة */}
         <div 
           onClick={() => setMobileMenuOpen(false)} 
-          className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" 
+          className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm transition-opacity" 
         />
 
         {/* جسم القائمة المنزلق من اليمين */}
         <aside 
-          className={`absolute top-0 right-0 h-full w-[280px] max-w-[85vw] bg-card border-l border-border shadow-2xl flex flex-col transform transition-transform duration-300 ease-out ${
+          className={`absolute top-0 right-0 h-full w-[280px] max-w-[85vw] bg-white border-l border-amber-200 shadow-2xl flex flex-col transform transition-transform duration-300 ease-out ${
             mobileMenuOpen ? "translate-x-0" : "translate-x-full"
           }`}
         >
-          {/* رأس القائمة */}
-          <div className="flex items-center justify-between p-4 border-b border-border bg-muted/40">
+          <div className="flex items-center justify-between p-4 border-b border-amber-100 bg-amber-50/50">
             <div className="flex items-center gap-2">
-              <div className="size-8 rounded-full bg-primary/20 flex items-center justify-center font-bold text-primary">ش</div>
-              <span className="font-extrabold text-sm">أنظمة منصة الشجاع</span>
+              <div className="w-8 h-8 rounded-full bg-amber-400 text-slate-900 font-extrabold flex items-center justify-center text-sm">
+                ش
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-900">أنظمة المنصة</p>
+                <p className="text-[11px] text-slate-500">{currentUser?.name}</p>
+              </div>
             </div>
             <button 
               onClick={() => setMobileMenuOpen(false)}
-              className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
-              aria-label="إغلاق القائمة"
+              className="p-1.5 rounded-lg text-slate-500 hover:bg-amber-100 hover:text-slate-800 transition-colors"
+              aria-label="إغلاق"
             >
-              <X className="size-5" />
+              <X className="w-5 h-5" />
             </button>
           </div>
 
-          {/* باركود البحث السريع بالموبايل */}
-          <div className="p-3 border-b border-border sm:hidden">
-            <form onSubmit={scan} className="flex items-center gap-1.5 bg-muted/50 p-1 rounded border border-border">
-              <Barcode className="size-4 text-muted-foreground mr-1" />
-              <input 
-                value={barcode} 
-                onChange={(e) => setBarcode(e.target.value)} 
-                placeholder="مسح باركود..." 
-                className="w-full bg-transparent text-xs outline-none" 
+          <div className="p-3 border-b border-amber-100 sm:hidden">
+            <form onSubmit={handleBarcodeScan} className="flex items-center gap-1 bg-amber-50/60 p-1.5 rounded border border-amber-200">
+              <Barcode className="w-4 h-4 text-slate-500" />
+              <input
+                type="text"
+                placeholder="مسح باركود..."
+                value={barcodeInput}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBarcodeInput(e.target.value)}
+                className="bg-transparent border-none outline-none text-xs w-full text-slate-800"
               />
-              <Button type="submit" size="sm" variant="secondary" className="h-7 text-xs px-2">تحديد</Button>
+              <button type="submit" className="text-xs bg-amber-400 text-slate-900 font-bold px-2 py-1 rounded">
+                تحديد
+              </button>
             </form>
           </div>
 
-          {/* التبويبات */}
           <nav className="flex-1 overflow-y-auto p-2 space-y-1">
-            {shown.map((t) => {
-              const active = tab === t.id;
+            {allowedNav.map((item) => {
+              const Icon = item.icon;
+              const active = activeTab === item.id;
               return (
                 <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => changeTab(t.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-                    active 
-                      ? "bg-primary text-primary-foreground shadow-sm font-bold" 
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  key={item.id}
+                  onClick={() => selectTab(item.id)}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold transition-all ${
+                    active
+                      ? "bg-amber-400 text-slate-900 shadow-sm"
+                      : "text-slate-600 hover:bg-amber-50 hover:text-slate-950"
                   }`}
                 >
-                  <span className={`${active ? "text-primary-foreground" : "text-muted-foreground"}`}>{t.icon}</span>
-                  <span>{t.label}</span>
+                  <Icon className={`w-4 h-4 ${active ? "text-slate-900" : "text-amber-600"}`} />
+                  <span>{item.label}</span>
                 </button>
               );
             })}
           </nav>
 
-          {/* أسفل القائمة: زر الخروج */}
-          <div className="p-3 border-t border-border bg-muted/20">
-            <Button variant="ghost" size="sm" onClick={logout} className="w-full justify-start text-destructive hover:bg-destructive/10 hover:text-destructive gap-2">
-              <LogOut className="size-4" /> خروج من النظام
-            </Button>
+          <div className="p-3 border-t border-amber-100 bg-amber-50/20">
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center justify-center gap-2 py-2 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            >
+              <LogOut className="w-4 h-4" /> تسجيل الخروج
+            </button>
           </div>
         </aside>
       </div>
 
-      {/* محتوى الصفحة الرئيسي */}
-      <main className="mx-auto max-w-[1600px] px-4 py-5 md:px-8">
-        {/* شريط الأقسام لشاشات الكمبيوتر فقط */}
-        <nav aria-label="أقسام النظام" className="mb-6 hidden lg:flex gap-1 overflow-x-auto border-b-2 border-border pb-2 flex-wrap">
-          {shown.map((t) => (
-            <Button 
-              key={t.id} 
-              type="button" 
-              variant={tab === t.id ? "default" : "ghost"} 
-              size="sm" 
-              onClick={() => changeTab(t.id)} 
-              className="shrink-0 gap-2 font-medium"
-            >
-              {t.icon}
-              {t.label}
-            </Button>
-          ))}
-        </nav>
-
-        {/* عنوان القسم الحالي وزر تبديل بالموبايل */}
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg sm:text-xl font-extrabold">{tabs.find((t) => t.id === tab)?.label}</h2>
-            <button 
-              onClick={() => setMobileMenuOpen(true)}
-              className="lg:hidden text-xs text-primary underline underline-offset-4 mr-2"
-            >
-              (تغيير القسم)
-            </button>
+      {/* تخطيط الصفحة مع القائمة الثابتة للشاشات الكبيرة */}
+      <div className="flex-1 max-w-[1700px] w-full mx-auto flex gap-4 p-4">
+        {/* قائمة سطح المكتب الجانبية */}
+        <aside className="hidden lg:flex flex-col w-64 bg-white border border-amber-200 rounded-xl shadow-sm p-3 shrink-0 h-[calc(100vh-80px)] sticky top-20">
+          <div className="p-2 mb-2 bg-amber-50 border border-amber-100 rounded-lg text-center">
+            <p className="text-xs font-bold text-slate-900">{currentUser?.name}</p>
+            <p className="text-[11px] text-amber-700 font-semibold">{currentUser?.stationName} · {currentUser?.role}</p>
           </div>
-          {visibleTable && <span className="text-xs sm:text-sm text-muted-foreground">{(list.data?.count ?? 0).toLocaleString("ar-IQ")} طلب</span>}
-        </div>
 
-        {tab === "home" && (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-            {[
-              ["إجمالي الشحنات", stats.data?.total], 
-              ["غير مؤكدة", stats.data?.unconfirmed], 
-              ["قيد التوصيل", stats.data?.transit], 
-              ["تم التسليم", stats.data?.delivered], 
-              ["راجع", stats.data?.returned]
-            ].map(([label, count]) => (
-              <div key={String(label)} className="border border-border bg-card p-4 rounded-lg shadow-sm">
-                <p className="text-xs sm:text-sm text-muted-foreground">{label}</p>
-                <p className="mt-2 text-2xl sm:text-3xl font-extrabold">{count ?? "—"}</p>
-              </div>
-            ))}
-            {stats.isError && <ErrorRetry onRetry={() => qc.invalidateQueries({ queryKey: ["shipment-stats"] })} />}
-          </div>
-        )}
+          <nav className="flex-1 overflow-y-auto space-y-1 pr-1">
+            {allowedNav.map((item) => {
+              const Icon = item.icon;
+              const active = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => selectTab(item.id)}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-bold transition-all ${
+                    active
+                      ? "bg-amber-400 text-slate-950 shadow-sm"
+                      : "text-slate-600 hover:bg-amber-50 hover:text-slate-900"
+                  }`}
+                >
+                  <Icon className={`w-4 h-4 ${active ? "text-slate-950" : "text-amber-600"}`} />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
 
-        {tab === "search" && (
-          <div className="mb-5 grid gap-3 md:grid-cols-3">
-            <Field label="كلمة البحث (رقم الوصل، الاسم، الهاتف)">
-              <Input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} placeholder="ابحث هنا..." />
-            </Field>
-            <Field label="اسم المتجر">
-              <Input value={store} onChange={(e) => { setStore(e.target.value); setPage(0); }} placeholder="اسم المتجر" />
-            </Field>
-            <Field label="المحافظة">
-              <select className="border border-input bg-background rounded-md px-3 py-2 text-sm w-full" value={city} onChange={(e) => { setCity(e.target.value); setPage(0); }}>
-                {CITIES.map((c) => <option key={c} value={c}>{c === "الكل" ? "كل المحافظات" : c}</option>)}
-              </select>
-            </Field>
-          </div>
-        )}
-
-        {tab === "late" && <p className="mb-4 text-sm text-muted-foreground">يُحتسب التأخير وفق ساعات العمل والعطل وفترات التعليق المسجلة.</p>}
-        {tab === "stickers" && <StickerForm onDone={() => { refresh(); changeTab("unconfirmed"); }} />}
-        {tab === "comments" && <Comments />}
-        {tab === "users" && <StaffView />}
-        {tab === "schedule" && <Schedule />}
-        {tab === "inactive" && <p className="border border-border bg-card p-8 text-center text-muted-foreground">لا يوجد سجل مستقل للعملاء في النظام حالياً.</p>}
-        {tab === "lists" && <p className="mb-4 text-sm text-muted-foreground">الوصولات المسلّمة والراجعة؛ يشمل التصدير جميع الصفحات.</p>}
-        {tab === "branches" && <p className="mb-4 text-sm text-muted-foreground">الشحنات المرتبطة بالفروع. لتعديل الفرع استخدم الإجراء في صف الشحنة.</p>}
-
-        {visibleTable && (
-          <section aria-label="قائمة الطلبات" className="border border-border bg-card rounded-lg overflow-hidden shadow-sm">
-            <div className="flex flex-wrap items-center gap-2 border-b border-border p-3 bg-muted/10">
-              <Button size="sm" variant="outline" disabled={!rows.length} onClick={() => setSelected(selected.length === rows.length ? [] : rows.map((s) => s.id))}>
-                {selected.length === rows.length && rows.length ? "إلغاء تحديد الصفحة" : "تحديد الصفحة"}
-              </Button>
-              <span className="text-xs sm:text-sm text-muted-foreground">{selected.length} محددة</span>
-              <select 
-                aria-label="تغيير حالة المحدد" 
-                className="border border-input bg-background rounded-md px-2 py-1 text-xs" 
-                value="" 
-                disabled={!selected.length || mutate.isPending} 
-                onChange={(e) => { if (e.target.value) mutate.mutate({ ids: selected, changes: { status: e.target.value } }); }}
+        {/* مساحة المحتوى */}
+        <main className="flex-1 flex flex-col min-w-0">
+          {/* عنوان القسم للموبايل والكمبيوتر */}
+          <div className="bg-white border border-amber-200 rounded-xl p-3 mb-4 flex items-center justify-between shadow-sm">
+            <div className="flex items-center gap-2">
+              <span className="font-extrabold text-sm text-slate-900">
+                {NAVIGATION_ITEMS.find(n => n.id === activeTab)?.label}
+              </span>
+              <button 
+                onClick={() => setMobileMenuOpen(true)}
+                className="lg:hidden text-xs text-amber-700 font-bold underline mr-2"
               >
-                <option value="">تغيير الحالة...</option>
-                {(manager ? STATUSES : COURIER_STATUSES).map((s) => <option key={s}>{s}</option>)}
-              </select>
-              {manager && tab === "verification" && (
-                <Button size="sm" variant="secondary" disabled={!selected.length || mutate.isPending} onClick={() => mutate.mutate({ ids: selected, changes: { verified: true } })}>
-                  تأكيد التحقق
-                </Button>
-              )}
-              <Button className="mr-auto" size="sm" variant="outline" disabled={exporting} onClick={download}>
-                <Download className="size-4" /> {exporting ? "جارٍ التصدير..." : "تصدير CSV"}
-              </Button>
+                (تبديل النظام)
+              </button>
             </div>
-
-            {list.isError ? (
-              <ErrorRetry onRetry={() => qc.invalidateQueries({ queryKey: ["shipment-page"] })} />
-            ) : list.isPending ? (
-              <p className="p-12 text-center text-muted-foreground">جارٍ تحميل الطلبات...</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[990px] text-right text-sm">
-                  <thead className="bg-secondary text-muted-foreground">
-                    <tr>{["", "رقم الوصل", "المتجر", "المستلم والهاتف", "العنوان", "المبلغ", "الحالة", "المندوب / الفرع", "إجراءات"].map((h, i) => <th key={i} scope="col" className="p-3 font-bold">{h}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {!rows.length && <tr><td colSpan={9} className="p-12 text-center text-muted-foreground">لا توجد بيانات أو طلبات مسجلة في هذا القسم.</td></tr>}
-                    {rows.map((s) => (
-                      <tr key={s.id} className="border-t border-border align-top hover:bg-secondary/50">
-                        <td className="p-3"><input type="checkbox" aria-label={`تحديد الوصل ${s.waybill_number}`} checked={selected.includes(s.id)} onChange={() => setSelected((prev) => prev.includes(s.id) ? prev.filter((id) => id !== s.id) : [...prev, s.id])} className="accent-primary size-4" /></td>
-                        <td className="p-3 font-bold"><span className="font-mono">{s.waybill_number}</span><span className="block text-xs font-normal text-muted-foreground">{s.type}</span></td>
-                        <td className="max-w-36 break-words p-3">{s.store_name}</td>
-                        <td className="p-3"><span className="block">{s.recipient_name}</span><span dir="ltr" className="block text-right text-xs text-muted-foreground">{s.recipient_phone}</span></td>
-                        <td className="p-3">{s.city}<span className="block text-xs text-muted-foreground">{s.area}</span></td>
-                        <td className="p-3 tabular-nums">{Number(s.amount).toLocaleString("ar-IQ")} د.ع</td>
-                        <td className="p-3"><span className="border border-border bg-accent px-2 py-1 text-xs text-accent-foreground rounded">{s.status}</span></td>
-                        <td className="p-3">
-                          {manager ? (
-                            <>
-                              <select aria-label={`مندوب الوصل ${s.waybill_number}`} className="border border-input bg-background rounded px-2 py-1 max-w-36 text-xs" value={s.driver_id ?? ""} onChange={(e) => mutate.mutate({ ids: [s.id], changes: { driver_id: e.target.value || null } })}>
-                                <option value="">بدون مندوب</option>
-                                {couriers.data?.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}
-                              </select>
-                              <span className="block text-xs text-muted-foreground">{s.branch_name || "—"}</span>
-                            </>
-                          ) : s.branch_name || "—"}
-                        </td>
-                        <td className="p-3">
-                          <div className="flex gap-1">
-                            {manager && s.status === "غير مؤكد" && (
-                              <Button size="icon" variant="outline" title="تأكيد الطلب" aria-label="تأكيد الطلب" onClick={() => mutate.mutate({ ids: [s.id], changes: { status: "قيد التنفيذ" } })}>
-                                <Check className="size-4" />
-                              </Button>
-                            )}
-                            <Button size="icon" variant="outline" title="مراسلة عبر واتساب" aria-label="مراسلة عبر واتساب" onClick={() => whatsapp(s.recipient_phone, `مرحباً ${s.recipient_name}، بخصوص شحنتك رقم ${s.waybill_number} من متجر ${s.store_name}`)}>
-                              <Send className="size-4" />
-                            </Button>
-                            {manager && <HoldButton shipment={s} onDone={refresh} />}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <div className="flex items-center justify-between border-t border-border p-3 bg-muted/5">
-              <Button variant="outline" size="sm" disabled={!page} onClick={() => { setPage((p) => p - 1); setSelected([]); }}>
-                <ChevronRight className="size-4" /> السابق
-              </Button>
-              <span className="text-xs sm:text-sm">صفحة {page + 1} من {Math.max(1, Math.ceil((list.data?.count ?? 0) / PAGE_SIZE))}</span>
-              <Button variant="outline" size="sm" disabled={(page + 1) * PAGE_SIZE >= (list.data?.count ?? 0)} onClick={() => { setPage((p) => p + 1); setSelected([]); }}>
-                التالي <ChevronLeft className="size-4" />
-              </Button>
-            </div>
-          </section>
-        )}
-      </main>
-    </div>
-  );
-}
-
-function ErrorRetry({ onRetry }: { onRetry: () => void }) { 
-  return <div className="p-8 text-center"><p className="mb-3 text-destructive">تعذّر تحميل البيانات. تحقق من الاتصال.</p><Button variant="outline" onClick={onRetry}>إعادة المحاولة</Button></div>; 
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) { 
-  return <label className="space-y-1 text-sm font-bold block"><span>{label}</span>{children}</label>; 
-}
-
-function HoldButton({ shipment, onDone }: { shipment: Shipment; onDone: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const add = async () => { 
-    const reason = prompt("سبب التعليق المبرر"); 
-    if (!reason?.trim()) return; 
-    setBusy(true);
-    const { error } = await supabase.from("shipment_holds").insert({ shipment_id: shipment.id, reason: reason.trim().slice(0, 500), started_at: new Date().toISOString() });
-    setBusy(false); 
-    if (error) explain(error, "hold-start"); 
-    else { toast.success("بدأ تعليق الشحنة"); onDone(); }
-  };
-  return <Button disabled={busy} size="sm" variant="ghost" onClick={add}>تعليق</Button>;
-}
-
-function StickerForm({ onDone }: { onDone: () => void }) {
-  const [count, setCount] = useState(5); 
-  const [store, setStore] = useState(""); 
-  const [busy, setBusy] = useState(false);
-  const submit = async (e: FormEvent) => { 
-    e.preventDefault(); 
-    const n = Math.min(Math.max(Number(count) || 1, 1), 100); 
-    if (!store.trim()) return void toast.error("أدخل اسم المتجر");
-    const base = crypto.randomUUID().replace(/\D/g, "").slice(0, 8).padEnd(8, "0"); 
-    setBusy(true);
-    const { error } = await supabase.from("shipments").insert(Array.from({ length: n }, (_, i) => ({ waybill_number: `${base}-${String(i + 1).padStart(3, "0")}`, store_name: store.trim().slice(0, 100) })));
-    setBusy(false); 
-    if (error) explain(error, "waybill-create"); 
-    else { toast.success(`تم توليد ${n} وصولات`); onDone(); }
-  };
-  return (
-    <form onSubmit={submit} className="max-w-xl space-y-4 border border-border bg-card p-5 rounded-lg shadow-sm">
-      <h3 className="text-lg font-bold">توليد وصولات جديدة</h3>
-      <Field label="اسم المتجر"><Input required maxLength={100} value={store} onChange={(e) => setStore(e.target.value)} /></Field>
-      <Field label="العدد"><Input type="number" min={1} max={100} value={count} onChange={(e) => setCount(Number(e.target.value))} /></Field>
-      <Button disabled={busy} className="gap-2"><Plus className="size-4" /> توليد الآن</Button>
-    </form>
-  );
-}
-
-function Comments() {
-  const qc = useQueryClient(); 
-  const [waybill, setWaybill] = useState(""); 
-  const [issue, setIssue] = useState(""); 
-  const [busy, setBusy] = useState(false);
-  const list = useQuery({ 
-    queryKey: ["comments"], 
-    queryFn: async () => { 
-      const { data, error } = await supabase.from("shipment_comments").select("*").order("created_at", { ascending: false }).limit(50); 
-      if (error) throw error; 
-      return data ?? []; 
-    } 
-  });
-  const add = async (e: FormEvent) => { 
-    e.preventDefault(); 
-    if (!waybill.trim() || !issue.trim()) return; 
-    setBusy(true);
-    const { data: u } = await supabase.auth.getUser(); 
-    if (!u.user) { setBusy(false); return toast.error("يجب تسجيل الدخول"); }
-    const { error } = await supabase.from("shipment_comments").insert({ 
-      waybill_number: waybill.trim(), 
-      issue: issue.trim().slice(0, 1000), 
-      author_id: u.user.id 
-    }); 
-    setBusy(false);
-    if (error) explain(error, "comment-create"); 
-    else { 
-      setWaybill(""); 
-      setIssue(""); 
-      qc.invalidateQueries({ queryKey: ["comments"] }); 
-      toast.success("تم تسجيل الملاحظة"); 
-    }
-  };
-  return (
-    <div className="space-y-4">
-      <form onSubmit={add} className="flex flex-wrap gap-2 border border-border bg-card p-4 rounded-lg shadow-sm">
-        <Input required className="w-full sm:w-44" placeholder="رقم الوصل" value={waybill} onChange={(e) => setWaybill(e.target.value)} />
-        <Input required className="min-w-56 flex-1" placeholder="الملاحظة" value={issue} onChange={(e) => setIssue(e.target.value)} />
-        <Button disabled={busy}>إضافة ملاحظة</Button>
-      </form>
-      {list.data?.map((c) => (
-        <div key={c.id} className="flex flex-wrap items-center gap-3 border border-border bg-card p-3 rounded-lg shadow-sm">
-          <b>وصل #{c.waybill_number}</b>
-          <span className="min-w-0 flex-1">{c.issue}</span>
-          <span className="text-xs text-muted-foreground">{c.status}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function StaffView() {
-  const qc = useQueryClient();
-  const staff = useQuery({
-    queryKey: ["staff-profiles"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("profiles").select("*");
-      if (error) throw error;
-      return data ?? [];
-    }
-  });
-
-  return (
-    <div className="space-y-4">
-      <div className="divide-y divide-border border border-border bg-card rounded-lg overflow-hidden shadow-sm">
-        {staff.data?.map((s) => (
-          <div key={s.id} className="flex flex-wrap items-center justify-between p-3 gap-2">
-            <div>
-              <p className="font-bold">{s.full_name || "بدون اسم"}</p>
-              <p className="text-xs text-muted-foreground">{s.phone || s.username || "—"}</p>
-            </div>
-            <span className="text-xs bg-muted px-2.5 py-1 rounded-full font-medium">{ROLE_LABELS[s.role as Role] || s.role}</span>
+            <span className="text-xs font-semibold text-slate-500">
+              {totalCount.toLocaleString("ar-IQ")} سجل
+            </span>
           </div>
-        ))}
-        {staff.data?.length === 0 && <p className="p-8 text-center text-muted-foreground">لا يوجد موظفون مسجلون.</p>}
+
+          {/* شريط الإجراءات والفلترة */}
+          {activeTab !== "home" && activeTab !== "staff" && (
+            <div className="bg-white border border-amber-200 rounded-xl p-3 mb-4 shadow-sm flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setSelectedIds(selectedIds.length === shipments.length ? [] : shipments.map(s => s.id))}
+                disabled={!shipments.length}
+                className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg text-xs font-bold text-slate-700 transition-colors"
+              >
+                {selectedIds.length === shipments.length && shipments.length ? "إلغاء التحديد" : "تحديد الصفحة"}
+              </button>
+
+              <span className="text-xs font-bold text-slate-500">{selectedIds.length} محددة</span>
+
+              <select
+                disabled={!selectedIds.length}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                  if (e.target.value) handleBulkStatusChange(e.target.value);
+                }}
+                className="text-xs border border-amber-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 outline-none"
+              >
+                <option value="">تغيير الحالة للمحدد...</option>
+                {STATUS_LIST.map(st => <option key={st} value={st}>{st}</option>)}
+              </select>
+
+              <input
+                type="text"
+                placeholder="بحث في الجدول..."
+                value={searchQuery}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  setSearchQuery(e.target.value);
+                  setPage(0);
+                }}
+                className="text-xs border border-amber-200 rounded-lg px-3 py-1.5 outline-none mr-auto w-full sm:w-56"
+              />
+
+              <button
+                onClick={() => fetchShipments()}
+                className="p-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg text-slate-700 transition-colors"
+                title="تحديث البيانات"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* جدول البيانات */}
+          <div className="bg-white border border-amber-200 rounded-xl shadow-sm overflow-hidden flex-1 flex flex-col">
+            <div className="overflow-x-auto flex-1">
+              <table className="w-full text-right text-xs">
+                <thead className="bg-amber-50/80 border-b border-amber-200 text-slate-700 font-extrabold">
+                  <tr>
+                    <th className="p-3 w-8"></th>
+                    <th className="p-3">رقم الوصل</th>
+                    <th className="p-3">المتجر</th>
+                    <th className="p-3">المستلم والهاتف</th>
+                    <th className="p-3">العنوان</th>
+                    <th className="p-3">المبلغ</th>
+                    <th className="p-3">الحالة</th>
+                    <th className="p-3">المندوب</th>
+                    <th className="p-3">إجراءات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-amber-100">
+                  {loading ? (
+                    <tr>
+                      <td colSpan={9} className="p-12 text-center text-slate-500 font-bold">جارٍ التحميل...</td>
+                    </tr>
+                  ) : shipments.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="p-12 text-center text-slate-500 font-bold">لا توجد شحنات في هذا القسم.</td>
+                    </tr>
+                  ) : (
+                    shipments.map((s: Shipment) => {
+                      const isSelected = selectedIds.includes(s.id);
+                      return (
+                        <tr key={s.id} className={`hover:bg-amber-50/30 transition-colors ${isSelected ? "bg-amber-50/70" : ""}`}>
+                          <td className="p-3">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => {
+                                setSelectedIds(prev => prev.includes(s.id) ? prev.filter(id => id !== s.id) : [...prev, s.id]);
+                              }}
+                              className="rounded border-amber-300 text-amber-500 focus:ring-amber-400"
+                            />
+                          </td>
+                          <td className="p-3 font-bold text-slate-900 font-mono">{s.waybill_number}</td>
+                          <td className="p-3 font-medium text-slate-800">{s.store_name}</td>
+                          <td className="p-3">
+                            <div className="font-bold text-slate-900">{s.recipient_name}</div>
+                            <div className="text-[11px] text-slate-500 font-mono" dir="ltr">{s.recipient_phone}</div>
+                          </td>
+                          <td className="p-3">
+                            <span className="font-semibold text-slate-800">{s.city}</span>
+                            <span className="text-slate-500 block text-[11px]">{s.area}</span>
+                          </td>
+                          <td className="p-3 font-bold text-slate-900">
+                            {Number(s.amount).toLocaleString("ar-IQ")} د.ع
+                          </td>
+                          <td className="p-3">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-200">
+                              {s.status}
+                            </span>
+                          </td>
+                          <td className="p-3 text-slate-700">{s.driver_name || "—"}</td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => {
+                                  const clean = s.recipient_phone.replace(/\D/g, "");
+                                  const num = clean.startsWith("0") ? `964${clean.slice(1)}` : clean;
+                                  window.open(`https://wa.me/${num}?text=${encodeURIComponent(`مرحباً ${s.recipient_name} بخصوص شحنتك رقم ${s.waybill_number}`)}`, "_blank");
+                                }}
+                                className="p-1 rounded bg-amber-50 hover:bg-amber-100 text-slate-700"
+                                title="واتساب"
+                              >
+                                <Send className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => toggleHold(s.id, s.is_held)}
+                                className={`p-1 rounded ${s.is_held ? "bg-red-100 text-red-700" : "bg-amber-50 hover:bg-amber-100 text-slate-700"}`}
+                                title={s.is_held ? "استئناف" : "تعليق"}
+                              >
+                                {s.is_held ? <PlayCircle className="w-3.5 h-3.5" /> : <PauseCircle className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* أزرار الصفحات */}
+            <div className="p-3 border-t border-amber-100 flex items-center justify-between bg-amber-50/20">
+              <button
+                disabled={page === 0}
+                onClick={() => setPage(p => p - 1)}
+                className="flex items-center gap-1 px-3 py-1 bg-white border border-amber-200 rounded text-xs font-bold text-slate-700 disabled:opacity-40"
+              >
+                <ChevronRight className="w-4 h-4" /> السابق
+              </button>
+              <span className="text-xs font-bold text-slate-600">
+                صفحة {page + 1} من {Math.max(1, Math.ceil(totalCount / pageSize))}
+              </span>
+              <button
+                disabled={(page + 1) * pageSize >= totalCount}
+                onClick={() => setPage(p => p + 1)}
+                className="flex items-center gap-1 px-3 py-1 bg-white border border-amber-200 rounded text-xs font-bold text-slate-700 disabled:opacity-40"
+              >
+                التالي <ChevronLeft className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </main>
       </div>
     </div>
   );
 }
-
-function Schedule() {
-  return (
-    <div className="border border-border bg-card p-6 rounded-lg text-center text-muted-foreground">
-      نظام احتساب أوقات الدوام والعطل يعمل تلقائياً وفق إعدادات القائد المسجلة في النظام.
-    </div>
-  );
-}
+export default Dashboard;
