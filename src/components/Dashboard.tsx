@@ -1,289 +1,593 @@
-import { useState, useEffect, useCallback } from "react";
-import {
-  Search,
-  AlertTriangle,
-  Truck,
-  Package,
-  Clock,
-  Archive,
-  RotateCcw,
-  MessageSquare,
-  FileSpreadsheet,
-  Layers,
-  GitBranch,
-  UserX,
-  Users,
-  LogOut,
-  User,
-  CheckCircle2,
-  Home,
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { 
+  Archive, Barcode, Download, Layers, LogOut, MessageSquare, 
+  Package, Search, ShieldCheck, Truck, TrendingUp, Users, 
+  AlertTriangle, Plus, Clock, RotateCcw, FileSpreadsheet, 
+  Building2, UserX, Send, Check, ChevronRight, ChevronLeft, 
+  CalendarDays, Menu, X 
 } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { cloudError } from "@/lib/cloud-errors";
+import { fetchPage, exportPages, PAGE_SIZE, type Shipment, type ShipmentFilter, type ShipmentTab } from "@/lib/shipments";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { loadIdentity } from "@/lib/leader-guard";
+import { toShipmentTab, normalizeBarcode, canManageStaff, type Role } from "@/lib/access";
 
-import { supabase } from "../lib/supabase";
-import { ShipmentsTable } from "./ShipmentsTable";
-import { StaffManager } from "./StaffManager";
-import { CommentsSystem } from "./CommentsSystem";
-import { StickersSystem } from "./StickersSystem";
-import { ListsSystem } from "./ListsSystem";
+type Tab = ShipmentTab | "comments" | "stickers" | "users" | "schedule";
+const ROLE_LABELS: Record<Role, string> = { leader: "قائد", accountant: "محاسب", courier: "مندوب" };
+const ROLES: Role[] = ["courier", "accountant", "leader"];
+const STATUSES = ["غير مؤكد", "ب. مندوب الاستلام", "قيد التنفيذ", "بحوزة المندوب", "مؤجل", "تم التسليم", "راجع"];
+const COURIER_STATUSES = ["بحوزة المندوب", "مؤجل", "تم التسليم", "راجع"];
+const CITIES = ["الكل", "بغداد", "البصرة", "أربيل", "النجف", "كربلاء", "نينوى", "السليمانية", "بابل", "ديالى", "كركوك", "ذي قار"];
+const DAYS = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
-interface DashboardProps {
-  onLogout?: () => void;
+const tabs: { id: Tab; label: string; icon: ReactNode; roles: Role[] }[] = [
+  { id: "home", label: "الرئيسية", icon: <TrendingUp className="size-4" />, roles: ROLES },
+  { id: "mine", label: "شحناتي", icon: <Truck className="size-4" />, roles: ["courier"] },
+  { id: "search", label: "البحث المتقدم", icon: <Search className="size-4" />, roles: ["leader", "accountant"] },
+  { id: "unconfirmed", label: "طلبات غير مؤكدة", icon: <AlertTriangle className="size-4" />, roles: ["leader"] },
+  { id: "pickup", label: "مندوب الاستلام", icon: <Truck className="size-4" />, roles: ["leader", "courier"] },
+  { id: "internal", label: "طلبات داخلية", icon: <Package className="size-4" />, roles: ["leader", "courier"] },
+  { id: "external", label: "طلبات خارجية", icon: <Truck className="size-4" />, roles: ["leader", "courier"] },
+  { id: "waiting", label: "قيد الانتظار", icon: <Clock className="size-4" />, roles: ["leader", "courier"] },
+  { id: "archives", label: "الأرشيف", icon: <Archive className="size-4" />, roles: ["leader", "accountant"] },
+  { id: "late", label: "طلبات متأخرة", icon: <RotateCcw className="size-4" />, roles: ["leader", "accountant"] },
+  { id: "comments", label: "الردود والملاحظات", icon: <MessageSquare className="size-4" />, roles: ["leader", "courier"] },
+  { id: "lists", label: "كشوفات الحساب", icon: <FileSpreadsheet className="size-4" />, roles: ["leader", "accountant"] },
+  { id: "branches", label: "تعديلات الفروع", icon: <Building2 className="size-4" />, roles: ["leader"] },
+  { id: "inactive", label: "عملاء غير فعالين", icon: <UserX className="size-4" />, roles: ["leader"] },
+  { id: "stickers", label: "توليد وصولات", icon: <Layers className="size-4" />, roles: ["leader"] },
+  { id: "verification", label: "قيد التحقق", icon: <ShieldCheck className="size-4" />, roles: ["leader", "courier"] },
+  { id: "schedule", label: "مواعيد العمل", icon: <CalendarDays className="size-4" />, roles: ["leader"] },
+  { id: "users", label: "إدارة الموظفين", icon: <Users className="size-4" />, roles: ["leader"] },
+];
+
+function whatsapp(phone: string, text: string) {
+  const clean = phone.replace(/\D/g, "");
+  const num = clean.startsWith("0") ? `964${clean.slice(1)}` : clean;
+  window.open(`https://wa.me/${num}?text=${encodeURIComponent(text)}`, "_blank");
 }
 
-export function Dashboard({ onLogout }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState<string>("home");
+function explain(err: unknown, fallback: string) {
+  const msg = err instanceof Error ? err.message : cloudError(fallback, err);
+  toast.error(msg);
+}
 
-  const [userProfile, setUserProfile] = useState({
-    name: "مهيمن صلاح",
-    username: "alshujaa_admin",
-    phone: "07818110818",
-    role: "قائد المنظومة",
-    station: "المقر الرئيسي",
+export function Dashboard() {
+  const qc = useQueryClient();
+  const [tab, setTab] = useState<Tab>("home");
+  const [page, setPage] = useState(0);
+  const [query, setQuery] = useState("");
+  const [store, setStore] = useState("");
+  const [city, setCity] = useState("الكل");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [barcode, setBarcode] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const me = useQuery({ queryKey: ["me"], queryFn: loadIdentity });
+  const role = me.data?.role;
+  const manager = role === "leader" || role === "accountant";
+
+  const shipmentTab = toShipmentTab(tab);
+  const filter: ShipmentFilter = { tab: shipmentTab, page, query, store, city, courierId: me.data?.id };
+
+  const list = useQuery({
+    queryKey: ["shipment-page", filter],
+    queryFn: () => fetchPage(filter),
+    enabled: Boolean(role && !["home", "comments", "stickers", "users", "schedule", "inactive"].includes(tab)),
   });
 
-  const loadProfile = useCallback(async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+  const stats = useQuery({
+    queryKey: ["shipment-stats"],
+    queryFn: async () => {
+      const states = ["غير مؤكد", "قيد التنفيذ", "تم التسليم", "راجع"];
+      const results = await Promise.all([
+        supabase.from("shipments").select("id", { count: "exact", head: true }),
+        ...states.map((status) => supabase.from("shipments").select("id", { count: "exact", head: true }).eq("status", status))
+      ]);
+      return {
+        total: results[0].count ?? 0,
+        unconfirmed: results[1].count ?? 0,
+        transit: results[2].count ?? 0,
+        delivered: results[3].count ?? 0,
+        returned: results[4].count ?? 0,
+      };
+    },
+    enabled: tab === "home",
+  });
 
-      const meta = user.user_metadata || {};
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .maybeSingle();
+  const couriers = useQuery({
+    queryKey: ["couriers"],
+    queryFn: async () => {
+      const { data } = await supabase.from("profiles").select("id, full_name").eq("role", "courier");
+      return data ?? [];
+    },
+    enabled: manager,
+  });
 
-      setUserProfile({
-        name: profile?.full_name || profile?.name || meta.name || user.email?.split("@")[0] || "مهيمن صلاح",
-        username: profile?.username || user.email?.split("@")[0] || "admin",
-        phone: profile?.phone || meta.phone || "07818110818",
-        role: "قائد المنظومة",
-        station: profile?.station || "محطة بغداد المركزية",
-      });
-    } catch {
-      // الحفاظ على الحساب كقائد
-    }
-  }, []);
+  const mutate = useMutation({
+    mutationFn: async ({ ids, changes }: { ids: string[]; changes: Record<string, unknown> }) => {
+      const { error } = await supabase.from("shipments").update(changes).in("id", ids);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["shipment-page"] });
+      qc.invalidateQueries({ queryKey: ["shipment-stats"] });
+      setSelected([]);
+      toast.success("تم تحديث الشحنات بنجاح");
+    },
+    onError: (err) => explain(err, "shipment-update"),
+  });
 
-  useEffect(() => {
-    loadProfile();
-  }, [loadProfile]);
+  const rows = list.data?.rows ?? [];
+  const refresh = () => { qc.invalidateQueries({ queryKey: ["shipment-page"] }); qc.invalidateQueries({ queryKey: ["shipment-stats"] }); };
+  const changeTab = (t: Tab) => { setTab(t); setPage(0); setSelected([]); setMobileMenuOpen(false); };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    if (onLogout) onLogout();
+  const scan = async (e: FormEvent) => { 
+    e.preventDefault(); 
+    const code = normalizeBarcode(barcode); 
+    if (!code) return;
+    const { data, error } = await supabase.from("shipments").select("id").eq("waybill_number", code).maybeSingle();
+    if (error) explain(error, "scan"); 
+    else if (data) { 
+      setSelected((prev) => prev.includes(data.id) ? prev : [...prev, data.id]); 
+      toast.success(`تم تحديد الوصل ${code}`); 
+    } else toast.error("الوصل غير موجود أو غير متاح لك"); 
+    setBarcode("");
   };
 
-  // قائمة الأنظمة بالترتيب الدقيق لصور الرائد
-  const navItems = [
-    { id: "home", label: "الرئيسية", icon: Home },
-    { id: "search", label: "البحث", icon: Search },
-    { id: "unconfirmed", label: "غير مؤكد", icon: AlertTriangle },
-    { id: "pickup", label: "ب. مندوب الاستلام", icon: Truck },
-    { id: "internal", label: "طلبات داخلية", icon: Package },
-    { id: "external", label: "طلبات خارجية", icon: Package },
-    { id: "waiting", label: "قيد الانتظار", icon: Clock },
-    { id: "archives", label: "الارشيف", icon: Archive },
-    { id: "late", label: "الطلبات المتأخرة", icon: RotateCcw },
-    { id: "comments", label: "الردود", icon: MessageSquare },
-    { id: "lists", label: "القوائم", icon: FileSpreadsheet },
-    { id: "branches", label: "تعديلات الفروع", icon: GitBranch },
-    { id: "inactive_clients", label: "عملاء غير فعالين", icon: UserX },
-    { id: "stickers", label: "توليد وصولات", icon: Layers },
-    { id: "users", label: "إدارة الموظفين", icon: Users, highlight: true },
-  ];
+  const logout = async () => { 
+    await qc.cancelQueries(); 
+    qc.clear(); 
+    await supabase.auth.signOut(); 
+    window.location.reload(); 
+  };
+
+  const download = async () => { 
+    setExporting(true); 
+    try { 
+      const ok = await exportPages(filter, tab === "lists" ? "settlement-shujaa.csv" : "shipments-shujaa.csv"); 
+      if (!ok) toast.error("لا توجد بيانات للتصدير"); 
+    } catch (e) { 
+      toast.error(e instanceof Error ? e.message : cloudError("export", e)); 
+    } finally { 
+      setExporting(false); 
+    } 
+  };
+
+  const shown = tabs.filter((t) => role && t.roles.includes(role) && (t.id !== "users" || canManageStaff(role)));
+  useEffect(() => { if (role && !shown.some((item) => item.id === tab)) changeTab("home"); }, [role]);
+
+  if (me.isPending) return <p className="p-10 text-center text-muted-foreground">جارٍ التحميل...</p>;
+  if (me.isError) return <div className="p-10 text-center"><p>تعذّر التحقق من الحساب.</p><Button onClick={() => qc.invalidateQueries({ queryKey: ["me"] })}>إعادة المحاولة</Button></div>;
+  if (!role) return <div className="p-10 text-center space-y-4"><p>لا توجد صلاحية مرتبطة بحسابك. تواصل مع القائد.</p><Button onClick={logout}>خروج</Button></div>;
+
+  const visibleTable = !["home", "comments", "stickers", "users", "schedule", "inactive"].includes(tab);
 
   return (
-    <div className="min-h-screen bg-[#f8f9fa] text-slate-800 flex flex-col font-sans" dir="rtl">
-      {/* 1. الشريط العلوي - هوية منصة الشجاع */}
-      <header className="h-14 bg-gradient-to-r from-amber-400 via-amber-300 to-yellow-400 border-b border-amber-300 px-6 flex items-center justify-between shadow-sm sticky top-0 z-30">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-white text-amber-600 font-black flex items-center justify-center text-sm shadow-sm border border-amber-200">
-            ش
+    <div dir="rtl" className="min-h-screen bg-background text-foreground font-sans pb-16">
+      {/* هيدر الصفحة */}
+      <header className="border-b-2 border-border bg-primary px-4 py-4 md:px-8">
+        <div className="mx-auto max-w-[1600px] flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            {/* زر القائمة للشاشات الصغيرة */}
+            <button 
+              type="button" 
+              onClick={() => setMobileMenuOpen(true)}
+              className="lg:hidden p-2 rounded-md bg-primary-foreground/10 hover:bg-primary-foreground/20 text-primary-foreground transition-colors"
+              aria-label="فتح القائمة"
+            >
+              <Menu className="size-6" />
+            </button>
+            <div>
+              <p className="text-[10px] sm:text-xs font-bold text-primary-foreground/75">نظام التشغيل الموحد</p>
+              <h1 className="text-xl sm:text-2xl md:text-3xl font-extrabold text-primary-foreground">منصة الشجاع</h1>
+              <p className="text-xs text-primary-foreground/80">{me.data?.name} · {ROLE_LABELS[role]}</p>
+            </div>
           </div>
-          <span className="font-bold text-base text-amber-950 tracking-tight">
-            منصة الشجاع للتوصيل السريع
-          </span>
-        </div>
 
-        <div className="flex items-center gap-4 text-xs font-medium text-amber-950">
-          <div className="hidden sm:flex items-center gap-1.5 bg-white/70 px-3 py-1 rounded-full border border-amber-200/80">
-            <User className="w-3.5 h-3.5 text-amber-800" />
-            <span className="font-bold">{userProfile.name}</span>
-            <span className="text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full text-[11px]">
-              {userProfile.role}
-            </span>
+          <div className="flex items-center gap-2">
+            <form onSubmit={scan} className="hidden sm:flex items-center gap-2 border border-primary-foreground/30 bg-card p-1.5 rounded">
+              <Barcode className="size-5 text-muted-foreground" />
+              <Input 
+                aria-label="رقم الوصل" 
+                value={barcode} 
+                onChange={(e) => setBarcode(e.target.value)} 
+                placeholder="مسح باركود أو رقم وصل" 
+                className="w-36 border-0 bg-transparent shadow-none sm:w-48 text-xs" 
+              />
+              <Button type="submit" size="sm" variant="secondary">تحديد</Button>
+            </form>
+            <Button variant="outline" size="sm" onClick={logout} className="gap-1.5">
+              <LogOut className="size-4" /> <span className="hidden sm:inline">خروج</span>
+            </Button>
           </div>
-
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-1.5 bg-white/80 hover:bg-white text-red-700 px-3 py-1 rounded-full border border-red-200 transition font-bold"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>خروج</span>
-          </button>
         </div>
       </header>
 
-      {/* 2. جسم التطبيق */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* الشريط الجانبي الأيمن */}
-        <aside className="w-64 bg-white border-l border-slate-200 flex flex-col justify-between overflow-y-auto shrink-0 shadow-sm">
-          <div className="p-3">
-            {/* الشعار الدائري */}
-            <div className="flex flex-col items-center py-4 border-b border-slate-100 mb-2">
-              <div className="w-16 h-16 rounded-full bg-amber-50 border-2 border-amber-300 flex items-center justify-center text-amber-600 shadow-inner mb-2">
-                <Package className="w-8 h-8" />
-              </div>
-              <div className="text-sm font-bold text-slate-800">منصة الشجاع</div>
-              <div className="text-[11px] text-slate-500">نظام إدارة الشحنات والطرود</div>
-            </div>
+      {/* القائمة الجانبية السلسة للهواتف (Drawer) */}
+      <div 
+        className={`fixed inset-0 z-50 lg:hidden transition-opacity duration-300 ${
+          mobileMenuOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+        }`}
+      >
+        {/* خلفية معتمة ناعمة */}
+        <div 
+          onClick={() => setMobileMenuOpen(false)} 
+          className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" 
+        />
 
-            {/* عناصر التنقل */}
-            <nav className="space-y-0.5">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => setActiveTab(item.id)}
-                    className={`w-full flex items-center gap-3 px-3.5 py-2 rounded-lg text-xs font-bold transition-all text-right ${
-                      isActive
-                        ? "bg-amber-400 text-amber-950 shadow-sm"
-                        : item.highlight
-                        ? "text-amber-800 bg-amber-50/70 hover:bg-amber-100/80 border border-amber-200"
-                        : "text-slate-600 hover:bg-amber-50 hover:text-amber-900"
-                    }`}
-                  >
-                    <Icon className={`w-4 h-4 ${isActive ? "text-amber-950" : item.highlight ? "text-amber-600" : "text-slate-400"}`} />
-                    <span>{item.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
+        {/* جسم القائمة المنزلق من اليمين */}
+        <aside 
+          className={`absolute top-0 right-0 h-full w-[280px] max-w-[85vw] bg-card border-l border-border shadow-2xl flex flex-col transform transition-transform duration-300 ease-out ${
+            mobileMenuOpen ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          {/* رأس القائمة */}
+          <div className="flex items-center justify-between p-4 border-b border-border bg-muted/40">
+            <div className="flex items-center gap-2">
+              <div className="size-8 rounded-full bg-primary/20 flex items-center justify-center font-bold text-primary">ش</div>
+              <span className="font-extrabold text-sm">أنظمة منصة الشجاع</span>
+            </div>
+            <button 
+              onClick={() => setMobileMenuOpen(false)}
+              className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+              aria-label="إغلاق القائمة"
+            >
+              <X className="size-5" />
+            </button>
           </div>
 
-          <div className="p-3 border-t border-slate-100 text-[11px] text-center text-slate-400">
-            منصة الشجاع للتوصيل السريع © 2026
+          {/* باركود البحث السريع بالموبايل */}
+          <div className="p-3 border-b border-border sm:hidden">
+            <form onSubmit={scan} className="flex items-center gap-1.5 bg-muted/50 p-1 rounded border border-border">
+              <Barcode className="size-4 text-muted-foreground mr-1" />
+              <input 
+                value={barcode} 
+                onChange={(e) => setBarcode(e.target.value)} 
+                placeholder="مسح باركود..." 
+                className="w-full bg-transparent text-xs outline-none" 
+              />
+              <Button type="submit" size="sm" variant="secondary" className="h-7 text-xs px-2">تحديد</Button>
+            </form>
+          </div>
+
+          {/* التبويبات */}
+          <nav className="flex-1 overflow-y-auto p-2 space-y-1">
+            {shown.map((t) => {
+              const active = tab === t.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => changeTab(t.id)}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    active 
+                      ? "bg-primary text-primary-foreground shadow-sm font-bold" 
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <span className={`${active ? "text-primary-foreground" : "text-muted-foreground"}`}>{t.icon}</span>
+                  <span>{t.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* أسفل القائمة: زر الخروج */}
+          <div className="p-3 border-t border-border bg-muted/20">
+            <Button variant="ghost" size="sm" onClick={logout} className="w-full justify-start text-destructive hover:bg-destructive/10 hover:text-destructive gap-2">
+              <LogOut className="size-4" /> خروج من النظام
+            </Button>
           </div>
         </aside>
+      </div>
 
-        {/* 3. شاشة العرض والمحتوى المتغير */}
-        <main className="flex-1 overflow-y-auto p-6 bg-[#f4f6f9]">
-          {/* الرئيسية: بطاقة الحساب الأصلية */}
-          {activeTab === "home" && (
-            <div className="max-w-2xl mx-auto mt-6">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="bg-amber-400 px-5 py-3 text-amber-950 font-bold text-sm flex items-center justify-between">
-                  <span>معلومات الحساب</span>
-                  <CheckCircle2 className="w-4 h-4 text-amber-900" />
-                </div>
+      {/* محتوى الصفحة الرئيسي */}
+      <main className="mx-auto max-w-[1600px] px-4 py-5 md:px-8">
+        {/* شريط الأقسام لشاشات الكمبيوتر فقط */}
+        <nav aria-label="أقسام النظام" className="mb-6 hidden lg:flex gap-1 overflow-x-auto border-b-2 border-border pb-2 flex-wrap">
+          {shown.map((t) => (
+            <Button 
+              key={t.id} 
+              type="button" 
+              variant={tab === t.id ? "default" : "ghost"} 
+              size="sm" 
+              onClick={() => changeTab(t.id)} 
+              className="shrink-0 gap-2 font-medium"
+            >
+              {t.icon}
+              {t.label}
+            </Button>
+          ))}
+        </nav>
 
-                <div className="p-6 divide-y divide-slate-100 text-sm">
-                  <div className="py-3 flex items-center justify-between">
-                    <span className="text-slate-500 font-medium">الاسم</span>
-                    <span className="font-bold text-slate-800">{userProfile.name}</span>
-                  </div>
+        {/* عنوان القسم الحالي وزر تبديل بالموبايل */}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg sm:text-xl font-extrabold">{tabs.find((t) => t.id === tab)?.label}</h2>
+            <button 
+              onClick={() => setMobileMenuOpen(true)}
+              className="lg:hidden text-xs text-primary underline underline-offset-4 mr-2"
+            >
+              (تغيير القسم)
+            </button>
+          </div>
+          {visibleTable && <span className="text-xs sm:text-sm text-muted-foreground">{(list.data?.count ?? 0).toLocaleString("ar-IQ")} طلب</span>}
+        </div>
 
-                  <div className="py-3 flex items-center justify-between">
-                    <span className="text-slate-500 font-medium">اسم المستخدم</span>
-                    <span className="font-bold text-slate-800">{userProfile.username}</span>
-                  </div>
-
-                  <div className="py-3 flex items-center justify-between">
-                    <span className="text-slate-500 font-medium">رقم الهاتف</span>
-                    <span className="font-bold text-slate-800 font-mono" dir="ltr">
-                      {userProfile.phone}
-                    </span>
-                  </div>
-
-                  <div className="py-3 flex items-center justify-between">
-                    <span className="text-slate-500 font-medium">النوع</span>
-                    <span className="px-3 py-1 bg-amber-100 text-amber-900 rounded-full font-bold text-xs">
-                      {userProfile.role}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="bg-slate-50 px-5 py-3 text-center text-xs text-slate-400 border-t border-slate-100">
-                  نظام إدارة شركات التوصيل © تطوير منصة الشجاع
-                </div>
+        {tab === "home" && (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+            {[
+              ["إجمالي الشحنات", stats.data?.total], 
+              ["غير مؤكدة", stats.data?.unconfirmed], 
+              ["قيد التوصيل", stats.data?.transit], 
+              ["تم التسليم", stats.data?.delivered], 
+              ["راجع", stats.data?.returned]
+            ].map(([label, count]) => (
+              <div key={String(label)} className="border border-border bg-card p-4 rounded-lg shadow-sm">
+                <p className="text-xs sm:text-sm text-muted-foreground">{label}</p>
+                <p className="mt-2 text-2xl sm:text-3xl font-extrabold">{count ?? "—"}</p>
               </div>
+            ))}
+            {stats.isError && <ErrorRetry onRetry={() => qc.invalidateQueries({ queryKey: ["shipment-stats"] })} />}
+          </div>
+        )}
+
+        {tab === "search" && (
+          <div className="mb-5 grid gap-3 md:grid-cols-3">
+            <Field label="كلمة البحث (رقم الوصل، الاسم، الهاتف)">
+              <Input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} placeholder="ابحث هنا..." />
+            </Field>
+            <Field label="اسم المتجر">
+              <Input value={store} onChange={(e) => { setStore(e.target.value); setPage(0); }} placeholder="اسم المتجر" />
+            </Field>
+            <Field label="المحافظة">
+              <select className="border border-input bg-background rounded-md px-3 py-2 text-sm w-full" value={city} onChange={(e) => { setCity(e.target.value); setPage(0); }}>
+                {CITIES.map((c) => <option key={c} value={c}>{c === "الكل" ? "كل المحافظات" : c}</option>)}
+              </select>
+            </Field>
+          </div>
+        )}
+
+        {tab === "late" && <p className="mb-4 text-sm text-muted-foreground">يُحتسب التأخير وفق ساعات العمل والعطل وفترات التعليق المسجلة.</p>}
+        {tab === "stickers" && <StickerForm onDone={() => { refresh(); changeTab("unconfirmed"); }} />}
+        {tab === "comments" && <Comments />}
+        {tab === "users" && <StaffView />}
+        {tab === "schedule" && <Schedule />}
+        {tab === "inactive" && <p className="border border-border bg-card p-8 text-center text-muted-foreground">لا يوجد سجل مستقل للعملاء في النظام حالياً.</p>}
+        {tab === "lists" && <p className="mb-4 text-sm text-muted-foreground">الوصولات المسلّمة والراجعة؛ يشمل التصدير جميع الصفحات.</p>}
+        {tab === "branches" && <p className="mb-4 text-sm text-muted-foreground">الشحنات المرتبطة بالفروع. لتعديل الفرع استخدم الإجراء في صف الشحنة.</p>}
+
+        {visibleTable && (
+          <section aria-label="قائمة الطلبات" className="border border-border bg-card rounded-lg overflow-hidden shadow-sm">
+            <div className="flex flex-wrap items-center gap-2 border-b border-border p-3 bg-muted/10">
+              <Button size="sm" variant="outline" disabled={!rows.length} onClick={() => setSelected(selected.length === rows.length ? [] : rows.map((s) => s.id))}>
+                {selected.length === rows.length && rows.length ? "إلغاء تحديد الصفحة" : "تحديد الصفحة"}
+              </Button>
+              <span className="text-xs sm:text-sm text-muted-foreground">{selected.length} محددة</span>
+              <select 
+                aria-label="تغيير حالة المحدد" 
+                className="border border-input bg-background rounded-md px-2 py-1 text-xs" 
+                value="" 
+                disabled={!selected.length || mutate.isPending} 
+                onChange={(e) => { if (e.target.value) mutate.mutate({ ids: selected, changes: { status: e.target.value } }); }}
+              >
+                <option value="">تغيير الحالة...</option>
+                {(manager ? STATUSES : COURIER_STATUSES).map((s) => <option key={s}>{s}</option>)}
+              </select>
+              {manager && tab === "verification" && (
+                <Button size="sm" variant="secondary" disabled={!selected.length || mutate.isPending} onClick={() => mutate.mutate({ ids: selected, changes: { verified: true } })}>
+                  تأكيد التحقق
+                </Button>
+              )}
+              <Button className="mr-auto" size="sm" variant="outline" disabled={exporting} onClick={download}>
+                <Download className="size-4" /> {exporting ? "جارٍ التصدير..." : "تصدير CSV"}
+              </Button>
             </div>
-          )}
 
-          {/* البحث المتقدم: شبكة حقول البحث المتكاملة */}
-          {activeTab === "search" && (
-            <ShipmentsTable mode="search" systemTitle="البحث المتقدم" />
-          )}
-
-          {/* غير مؤكد: شريط المراحل + باركود */}
-          {activeTab === "unconfirmed" && (
-            <ShipmentsTable mode="unconfirmed" filterStatus="غير مؤكد" systemTitle="غير مؤكد" />
-          )}
-
-          {/* ب. مندوب الاستلام */}
-          {activeTab === "pickup" && (
-            <ShipmentsTable mode="pickup" filterStatus="ب. مندوب الاستلام" systemTitle="ب. مندوب الاستلام" />
-          )}
-
-          {/* طلبات داخلية */}
-          {activeTab === "internal" && (
-            <ShipmentsTable mode="internal" filterCityType="داخلية" systemTitle="طلبات داخلية" />
-          )}
-
-          {/* طلبات خارجية */}
-          {activeTab === "external" && (
-            <ShipmentsTable mode="external" filterCityType="خارجية" systemTitle="طلبات خارجية" />
-          )}
-
-          {/* قيد الانتظار */}
-          {activeTab === "waiting" && (
-            <ShipmentsTable mode="waiting" filterStatus="مؤجل" systemTitle="قيد الانتظار" />
-          )}
-
-          {/* الارشيف */}
-          {activeTab === "archives" && (
-            <ShipmentsTable mode="archives" filterStatus="تم التسليم" systemTitle="الارشيف" />
-          )}
-
-          {/* الطلبات المتأخرة: فلتر الأيام واسم المتجر */}
-          {activeTab === "late" && (
-            <ShipmentsTable mode="late" filterLateOnly={true} systemTitle="الطلبات المتأخرة" />
-          )}
-
-          {/* الردود */}
-          {activeTab === "comments" && <CommentsSystem />}
-
-          {/* القوائم */}
-          {activeTab === "lists" && <ListsSystem />}
-
-          {/* توليد وصولات */}
-          {activeTab === "stickers" && <StickersSystem />}
-
-          {/* تعديلات الفروع */}
-          {activeTab === "branches" && (
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm text-center">
-              <h3 className="font-bold text-slate-700 mb-2">تعديلات الفروع</h3>
-              <p className="text-xs text-slate-500">لا توجد طلبات تعديل معلقة من الفروع حالياً.</p>
+            {list.isError ? (
+              <ErrorRetry onRetry={() => qc.invalidateQueries({ queryKey: ["shipment-page"] })} />
+            ) : list.isPending ? (
+              <p className="p-12 text-center text-muted-foreground">جارٍ تحميل الطلبات...</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[990px] text-right text-sm">
+                  <thead className="bg-secondary text-muted-foreground">
+                    <tr>{["", "رقم الوصل", "المتجر", "المستلم والهاتف", "العنوان", "المبلغ", "الحالة", "المندوب / الفرع", "إجراءات"].map((h, i) => <th key={i} scope="col" className="p-3 font-bold">{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {!rows.length && <tr><td colSpan={9} className="p-12 text-center text-muted-foreground">لا توجد بيانات أو طلبات مسجلة في هذا القسم.</td></tr>}
+                    {rows.map((s) => (
+                      <tr key={s.id} className="border-t border-border align-top hover:bg-secondary/50">
+                        <td className="p-3"><input type="checkbox" aria-label={`تحديد الوصل ${s.waybill_number}`} checked={selected.includes(s.id)} onChange={() => setSelected((prev) => prev.includes(s.id) ? prev.filter((id) => id !== s.id) : [...prev, s.id])} className="accent-primary size-4" /></td>
+                        <td className="p-3 font-bold"><span className="font-mono">{s.waybill_number}</span><span className="block text-xs font-normal text-muted-foreground">{s.type}</span></td>
+                        <td className="max-w-36 break-words p-3">{s.store_name}</td>
+                        <td className="p-3"><span className="block">{s.recipient_name}</span><span dir="ltr" className="block text-right text-xs text-muted-foreground">{s.recipient_phone}</span></td>
+                        <td className="p-3">{s.city}<span className="block text-xs text-muted-foreground">{s.area}</span></td>
+                        <td className="p-3 tabular-nums">{Number(s.amount).toLocaleString("ar-IQ")} د.ع</td>
+                        <td className="p-3"><span className="border border-border bg-accent px-2 py-1 text-xs text-accent-foreground rounded">{s.status}</span></td>
+                        <td className="p-3">
+                          {manager ? (
+                            <>
+                              <select aria-label={`مندوب الوصل ${s.waybill_number}`} className="border border-input bg-background rounded px-2 py-1 max-w-36 text-xs" value={s.driver_id ?? ""} onChange={(e) => mutate.mutate({ ids: [s.id], changes: { driver_id: e.target.value || null } })}>
+                                <option value="">بدون مندوب</option>
+                                {couriers.data?.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+                              </select>
+                              <span className="block text-xs text-muted-foreground">{s.branch_name || "—"}</span>
+                            </>
+                          ) : s.branch_name || "—"}
+                        </td>
+                        <td className="p-3">
+                          <div className="flex gap-1">
+                            {manager && s.status === "غير مؤكد" && (
+                              <Button size="icon" variant="outline" title="تأكيد الطلب" aria-label="تأكيد الطلب" onClick={() => mutate.mutate({ ids: [s.id], changes: { status: "قيد التنفيذ" } })}>
+                                <Check className="size-4" />
+                              </Button>
+                            )}
+                            <Button size="icon" variant="outline" title="مراسلة عبر واتساب" aria-label="مراسلة عبر واتساب" onClick={() => whatsapp(s.recipient_phone, `مرحباً ${s.recipient_name}، بخصوص شحنتك رقم ${s.waybill_number} من متجر ${s.store_name}`)}>
+                              <Send className="size-4" />
+                            </Button>
+                            {manager && <HoldButton shipment={s} onDone={refresh} />}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="flex items-center justify-between border-t border-border p-3 bg-muted/5">
+              <Button variant="outline" size="sm" disabled={!page} onClick={() => { setPage((p) => p - 1); setSelected([]); }}>
+                <ChevronRight className="size-4" /> السابق
+              </Button>
+              <span className="text-xs sm:text-sm">صفحة {page + 1} من {Math.max(1, Math.ceil((list.data?.count ?? 0) / PAGE_SIZE))}</span>
+              <Button variant="outline" size="sm" disabled={(page + 1) * PAGE_SIZE >= (list.data?.count ?? 0)} onClick={() => { setPage((p) => p + 1); setSelected([]); }}>
+                التالي <ChevronLeft className="size-4" />
+              </Button>
             </div>
-          )}
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}
 
-          {/* عملاء غير فعالين */}
-          {activeTab === "inactive_clients" && (
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm text-center">
-              <h3 className="font-bold text-slate-700 mb-2">العملاء غير الفعالين</h3>
-              <p className="text-xs text-slate-500">كافة حسابات العملاء نشطة في المنظومة.</p>
+function ErrorRetry({ onRetry }: { onRetry: () => void }) { 
+  return <div className="p-8 text-center"><p className="mb-3 text-destructive">تعذّر تحميل البيانات. تحقق من الاتصال.</p><Button variant="outline" onClick={onRetry}>إعادة المحاولة</Button></div>; 
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) { 
+  return <label className="space-y-1 text-sm font-bold block"><span>{label}</span>{children}</label>; 
+}
+
+function HoldButton({ shipment, onDone }: { shipment: Shipment; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const add = async () => { 
+    const reason = prompt("سبب التعليق المبرر"); 
+    if (!reason?.trim()) return; 
+    setBusy(true);
+    const { error } = await supabase.from("shipment_holds").insert({ shipment_id: shipment.id, reason: reason.trim().slice(0, 500), started_at: new Date().toISOString() });
+    setBusy(false); 
+    if (error) explain(error, "hold-start"); 
+    else { toast.success("بدأ تعليق الشحنة"); onDone(); }
+  };
+  return <Button disabled={busy} size="sm" variant="ghost" onClick={add}>تعليق</Button>;
+}
+
+function StickerForm({ onDone }: { onDone: () => void }) {
+  const [count, setCount] = useState(5); 
+  const [store, setStore] = useState(""); 
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: FormEvent) => { 
+    e.preventDefault(); 
+    const n = Math.min(Math.max(Number(count) || 1, 1), 100); 
+    if (!store.trim()) return void toast.error("أدخل اسم المتجر");
+    const base = crypto.randomUUID().replace(/\D/g, "").slice(0, 8).padEnd(8, "0"); 
+    setBusy(true);
+    const { error } = await supabase.from("shipments").insert(Array.from({ length: n }, (_, i) => ({ waybill_number: `${base}-${String(i + 1).padStart(3, "0")}`, store_name: store.trim().slice(0, 100) })));
+    setBusy(false); 
+    if (error) explain(error, "waybill-create"); 
+    else { toast.success(`تم توليد ${n} وصولات`); onDone(); }
+  };
+  return (
+    <form onSubmit={submit} className="max-w-xl space-y-4 border border-border bg-card p-5 rounded-lg shadow-sm">
+      <h3 className="text-lg font-bold">توليد وصولات جديدة</h3>
+      <Field label="اسم المتجر"><Input required maxLength={100} value={store} onChange={(e) => setStore(e.target.value)} /></Field>
+      <Field label="العدد"><Input type="number" min={1} max={100} value={count} onChange={(e) => setCount(Number(e.target.value))} /></Field>
+      <Button disabled={busy} className="gap-2"><Plus className="size-4" /> توليد الآن</Button>
+    </form>
+  );
+}
+
+function Comments() {
+  const qc = useQueryClient(); 
+  const [waybill, setWaybill] = useState(""); 
+  const [issue, setIssue] = useState(""); 
+  const [busy, setBusy] = useState(false);
+  const list = useQuery({ 
+    queryKey: ["comments"], 
+    queryFn: async () => { 
+      const { data, error } = await supabase.from("shipment_comments").select("*").order("created_at", { ascending: false }).limit(50); 
+      if (error) throw error; 
+      return data ?? []; 
+    } 
+  });
+  const add = async (e: FormEvent) => { 
+    e.preventDefault(); 
+    if (!waybill.trim() || !issue.trim()) return; 
+    setBusy(true);
+    const { data: u } = await supabase.auth.getUser(); 
+    if (!u.user) { setBusy(false); return toast.error("يجب تسجيل الدخول"); }
+    const { error } = await supabase.from("shipment_comments").insert({ 
+      waybill_number: waybill.trim(), 
+      issue: issue.trim().slice(0, 1000), 
+      author_id: u.user.id 
+    }); 
+    setBusy(false);
+    if (error) explain(error, "comment-create"); 
+    else { 
+      setWaybill(""); 
+      setIssue(""); 
+      qc.invalidateQueries({ queryKey: ["comments"] }); 
+      toast.success("تم تسجيل الملاحظة"); 
+    }
+  };
+  return (
+    <div className="space-y-4">
+      <form onSubmit={add} className="flex flex-wrap gap-2 border border-border bg-card p-4 rounded-lg shadow-sm">
+        <Input required className="w-full sm:w-44" placeholder="رقم الوصل" value={waybill} onChange={(e) => setWaybill(e.target.value)} />
+        <Input required className="min-w-56 flex-1" placeholder="الملاحظة" value={issue} onChange={(e) => setIssue(e.target.value)} />
+        <Button disabled={busy}>إضافة ملاحظة</Button>
+      </form>
+      {list.data?.map((c) => (
+        <div key={c.id} className="flex flex-wrap items-center gap-3 border border-border bg-card p-3 rounded-lg shadow-sm">
+          <b>وصل #{c.waybill_number}</b>
+          <span className="min-w-0 flex-1">{c.issue}</span>
+          <span className="text-xs text-muted-foreground">{c.status}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StaffView() {
+  const qc = useQueryClient();
+  const staff = useQuery({
+    queryKey: ["staff-profiles"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("profiles").select("*");
+      if (error) throw error;
+      return data ?? [];
+    }
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="divide-y divide-border border border-border bg-card rounded-lg overflow-hidden shadow-sm">
+        {staff.data?.map((s) => (
+          <div key={s.id} className="flex flex-wrap items-center justify-between p-3 gap-2">
+            <div>
+              <p className="font-bold">{s.full_name || "بدون اسم"}</p>
+              <p className="text-xs text-muted-foreground">{s.phone || s.username || "—"}</p>
             </div>
-          )}
-
-          {/* إدارة الموظفين للقائد */}
-          {activeTab === "users" && <StaffManager isLeader={true} />}
-        </main>
+            <span className="text-xs bg-muted px-2.5 py-1 rounded-full font-medium">{ROLE_LABELS[s.role as Role] || s.role}</span>
+          </div>
+        ))}
+        {staff.data?.length === 0 && <p className="p-8 text-center text-muted-foreground">لا يوجد موظفون مسجلون.</p>}
       </div>
     </div>
   );
 }
 
-export default Dashboard;
+function Schedule() {
+  return (
+    <div className="border border-border bg-card p-6 rounded-lg text-center text-muted-foreground">
+      نظام احتساب أوقات الدوام والعطل يعمل تلقائياً وفق إعدادات القائد المسجلة في النظام.
+    </div>
+  );
+}
