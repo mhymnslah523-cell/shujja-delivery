@@ -70,7 +70,7 @@ export default function Dashboard() {
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  // 1. جلب بيانات المستخدم الحقيقية
+  // 1. جلب بيانات المستخدم الحقيقية من Supabase
   useEffect(() => {
     async function getProfile() {
       try {
@@ -210,15 +210,9 @@ export default function Dashboard() {
     window.open(`https://wa.me/${formatted}?text=${encodeURIComponent(text)}`, "_blank");
   };
 
-  const handleTabChange = (id: string) => {
-    setActiveTab(id);
-    setPage(0);
-    setMobileMenuOpen(false);
-  };
-
   return (
     <div dir="rtl" className="flex min-h-screen bg-[#FFFDF7] text-slate-800 font-sans">
-      {/* 1. القائمة المنزلقة السلسة للموبايل */}
+      {/* القائمة المنزلقة للموبايل فقط */}
       <div 
         className={`fixed inset-0 z-50 lg:hidden transition-opacity duration-300 ${
           mobileMenuOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
@@ -226,7 +220,7 @@ export default function Dashboard() {
       >
         <div 
           onClick={() => setMobileMenuOpen(false)} 
-          className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" 
+          className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" 
         />
         <aside 
           className={`absolute top-0 right-0 h-full w-64 max-w-[85vw] bg-[#FFFDF7] border-l border-amber-300/40 flex flex-col justify-between shadow-2xl transform transition-transform duration-300 ease-out ${
@@ -246,7 +240,7 @@ export default function Dashboard() {
               </div>
               <button 
                 onClick={() => setMobileMenuOpen(false)}
-                className="p-1 rounded-lg text-slate-500 hover:bg-amber-100"
+                className="p-1.5 rounded-lg text-slate-500 hover:bg-amber-100"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -258,7 +252,7 @@ export default function Dashboard() {
                 return (
                   <button
                     key={tab.id}
-                    onClick={() => handleTabChange(tab.id)}
+                    onClick={() => { setActiveTab(tab.id); setPage(0); setMobileMenuOpen(false); }}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-semibold transition-all ${
                       active
                         ? "bg-amber-400 text-slate-900 shadow-sm border border-amber-500/30"
@@ -296,7 +290,7 @@ export default function Dashboard() {
         </aside>
       </div>
 
-      {/* 2. الشريط الجانبي الأيمن الكامل لسطح المكتب (Full RTL Sidebar) */}
+      {/* 1. الشريط الجانبي الأيمن الكامل لسطح المكتب (Full RTL Sidebar) */}
       <aside className="hidden lg:flex w-64 bg-amber-500/10 border-l border-amber-300/40 flex-col justify-between shrink-0 shadow-sm">
         <div>
           {/* الشعار */}
@@ -353,19 +347,19 @@ export default function Dashboard() {
         </div>
       </aside>
 
-      {/* 3. منطقة المحتوى الرئيسية */}
+      {/* 2. منطقة المحتوى الرئيسية */}
       <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        <header className="h-16 bg-white/80 backdrop-blur-md border-b border-amber-200/60 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-10">
+        <header className="h-16 bg-white/80 backdrop-blur-md border-b border-amber-200/60 px-6 flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center gap-3">
-            {/* زر القائمة للموبايل */}
             <button
+              type="button"
               onClick={() => setMobileMenuOpen(true)}
-              className="lg:hidden p-2 rounded-lg bg-amber-100 text-slate-800 hover:bg-amber-200 transition"
+              className="lg:hidden p-2 rounded-lg bg-amber-200/60 hover:bg-amber-300 text-slate-800 transition"
               aria-label="فتح القائمة"
             >
               <Menu className="w-5 h-5" />
             </button>
-            <h2 className="text-base sm:text-lg font-bold text-slate-800">
+            <h2 className="text-lg font-bold text-slate-800">
               {systemTabs.find((t) => t.id === activeTab)?.label}
             </h2>
             <span className="bg-amber-100 text-amber-900 text-xs font-bold px-2.5 py-0.5 rounded-full border border-amber-300/40">
@@ -374,7 +368,7 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="relative hidden sm:block">
+            <div className="relative">
               <Barcode className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
               <input
                 type="text"
@@ -391,7 +385,7 @@ export default function Dashboard() {
                   setSearchFilters(prev => ({ ...prev, waybill: barcodeInput.trim() }));
                 }
               }}
-              className="hidden sm:inline-block px-3 py-1.5 bg-amber-500 text-slate-900 font-bold text-xs rounded-lg hover:bg-amber-400 transition"
+              className="px-3 py-1.5 bg-amber-500 text-slate-900 font-bold text-xs rounded-lg hover:bg-amber-400 transition"
             >
               بحث
             </button>
@@ -402,41 +396,42 @@ export default function Dashboard() {
           {/* شاشة الرئيسية: معلومات الحساب والإحصائيات */}
           {activeTab === "home" && (
             <div className="space-y-6">
-              <div className="bg-white border border-amber-200 rounded-xl p-6 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
-                <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 rounded-full bg-amber-500/20 text-amber-900 flex items-center justify-center font-extrabold text-2xl border-2 border-amber-300">
-                    {userProfile?.name?.charAt(0) || "U"}
+              <div className="bg-white rounded-xl border border-amber-200/80 p-5 shadow-sm">
+                <h3 className="text-sm font-bold text-amber-900 mb-4 pb-2 border-b border-amber-100">
+                  بيانات الحساب والمستخدم الحالية
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="p-3 bg-amber-50/50 rounded-lg border border-amber-100">
+                    <span className="text-xs text-slate-500 block mb-1">الاسم الكامل</span>
+                    <span className="text-sm font-bold text-slate-800">{userProfile?.name}</span>
                   </div>
-                  <div>
-                    <h3 className="text-xl font-bold text-slate-800">{userProfile?.name}</h3>
-                    <p className="text-sm text-slate-500">اسم المستخدم: {userProfile?.username}</p>
-                    <p className="text-sm text-slate-500">رقم الهاتف: {userProfile?.phone || "غير مسجل"}</p>
+                  <div className="p-3 bg-amber-50/50 rounded-lg border border-amber-100">
+                    <span className="text-xs text-slate-500 block mb-1">اسم المستخدم / البريد</span>
+                    <span className="text-sm font-bold text-slate-800">{userProfile?.username}</span>
                   </div>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <div className="px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg text-center">
-                    <span className="block text-xs text-slate-500">النوع والصلاحية</span>
-                    <span className="font-bold text-amber-900">
-                      {userProfile?.role === "leader" ? "قائد المنظومة (Leader)" : userProfile?.role === "accountant" ? "محاسب النظام" : "مندوب توصيل"}
+                  <div className="p-3 bg-amber-50/50 rounded-lg border border-amber-100">
+                    <span className="text-xs text-slate-500 block mb-1">رقم الهاتف</span>
+                    <span className="text-sm font-bold text-slate-800">{userProfile?.phone || "07818110818"}</span>
+                  </div>
+                  <div className="p-3 bg-amber-50/50 rounded-lg border border-amber-100">
+                    <span className="text-xs text-slate-500 block mb-1">النوع والصلاحية</span>
+                    <span className="text-sm font-bold text-amber-800">
+                      {userProfile?.role === "leader" ? "قائد المنظومة (Leader)" : userProfile?.role === "accountant" ? "محاسب" : "مندوب"}
                     </span>
-                  </div>
-                  <div className="px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg text-center">
-                    <span className="block text-xs text-slate-500">المحطة / الفرع</span>
-                    <span className="font-bold text-amber-900">{userProfile?.stationName}</span>
                   </div>
                 </div>
               </div>
 
-              {/* بطاقات المؤشرات */}
+              {/* المؤشرات العامة */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
-                  { label: "إجمالي الشحنات", count: totalCount, color: "bg-blue-50 border-blue-200 text-blue-900" },
-                  { label: "شحنات مؤكدة", count: shipments.filter(s => s.status === "قيد التنفيذ").length, color: "bg-amber-50 border-amber-200 text-amber-900" },
-                  { label: "تم التسليم", count: shipments.filter(s => s.status === "تم التسليم").length, color: "bg-emerald-50 border-emerald-200 text-emerald-900" },
-                  { label: "شحنات راجعة", count: shipments.filter(s => s.status === "راجع").length, color: "bg-rose-50 border-rose-200 text-rose-900" },
+                  { label: "إجمالي الشحنات", count: totalCount, color: "bg-amber-100/50 text-amber-900" },
+                  { label: "قيد التنفيذ", count: shipments.filter(s => s.status === "قيد التنفيذ").length, color: "bg-blue-50 text-blue-900" },
+                  { label: "تم التسليم", count: shipments.filter(s => s.status === "تم التسليم").length, color: "bg-emerald-50 text-emerald-900" },
+                  { label: "شحنات راجعة", count: shipments.filter(s => s.status === "راجع").length, color: "bg-rose-50 text-rose-900" },
                 ].map((stat, i) => (
-                  <div key={i} className={`p-5 rounded-xl border ${stat.color} shadow-sm`}>
-                    <p className="text-xs font-bold opacity-80">{stat.label}</p>
+                  <div key={i} className={`p-4 rounded-xl border border-amber-200/60 ${stat.color} shadow-sm`}>
+                    <p className="text-xs font-semibold">{stat.label}</p>
                     <p className="mt-2 text-2xl font-black">{stat.count}</p>
                   </div>
                 ))}
@@ -446,7 +441,7 @@ export default function Dashboard() {
 
           {/* نموذج البحث المتقدم المتطابق مع الصور */}
           {activeTab === "search" && (
-            <div className="bg-white border border-amber-200 rounded-xl p-5 mb-6 shadow-sm">
+            <div className="bg-white border border-amber-200/80 rounded-xl p-5 mb-6 shadow-sm">
               <h3 className="text-sm font-bold text-slate-800 mb-4 pb-2 border-b border-amber-100 flex items-center gap-2">
                 <Search className="w-4 h-4 text-amber-600" />
                 حقول البحث المتعدد
@@ -517,7 +512,7 @@ export default function Dashboard() {
           )}
 
           {/* شريط الإجراءات فوق الجدول */}
-          <div className="bg-white border border-amber-200 rounded-t-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+          <div className="bg-white border border-amber-200/80 rounded-t-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-sm">
             <div className="flex items-center gap-2">
               <button
                 onClick={handleSelectAll}
@@ -553,7 +548,7 @@ export default function Dashboard() {
           </div>
 
           {/* جدول الشحنات التفصيلي */}
-          <div className="bg-white border-x border-b border-amber-200 rounded-b-xl shadow-sm overflow-hidden">
+          <div className="bg-white border-x border-b border-amber-200/80 rounded-b-xl shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-right text-xs">
                 <thead className="bg-amber-100/60 text-slate-700 border-b border-amber-200 font-bold">
