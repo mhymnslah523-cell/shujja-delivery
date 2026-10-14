@@ -3,7 +3,7 @@ import {
   TrendingUp, Search, AlertTriangle, Truck, Package, 
   Clock, Archive, RotateCcw, MessageSquare, FileSpreadsheet, 
   Building2, UserX, Layers, ShieldCheck, CalendarDays, 
-  Users, LogOut, Barcode, Send, Check, 
+  Users, LogOut, Barcode, Send, 
   PauseCircle, PlayCircle, RefreshCw, ChevronRight, ChevronLeft,
   Menu, X
 } from "lucide-react";
@@ -97,7 +97,7 @@ export function Dashboard() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [barcodeInput, setBarcodeInput] = useState<string>("");
 
-  // جلب المستخدم
+  // جلب بيانات المستخدم
   useEffect(() => {
     async function loadUser() {
       try {
@@ -188,7 +188,7 @@ export function Dashboard() {
     setBarcodeInput("");
   };
 
-  // تغيير الحالة
+  // تغيير الحالة للمحدد
   const handleBulkStatusChange = async (status: string) => {
     if (!selectedIds.length || !status) return;
     try {
@@ -576,4 +576,5 @@ export function Dashboard() {
     </div>
   );
 }
+
 export default Dashboard;
