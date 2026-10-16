@@ -7,7 +7,7 @@ import {
   PauseCircle, PlayCircle, RefreshCw, ChevronRight, ChevronLeft,
   Edit, Lock, X, Save, Plus, Menu, CheckCircle2, Shield,
   Phone, LayoutGrid, Table as TableIcon, UserCheck, DollarSign,
-  Trash2
+  Filter, Trash2
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { StaffManager } from "./StaffManager";
@@ -15,7 +15,21 @@ import { CommentsSystem } from "./CommentsSystem";
 import { ListsSystem } from "./ListsSystem";
 import { StickersSystem } from "./StickersSystem";
 
-export type UserRole = "leader" | "accountant" | "courier";
+export type UserRole = "leader" | "operator" | "accountant" | "courier";
+
+export interface StaffOption {
+  id: string;
+  name: string;
+  phone?: string;
+  role?: string;
+}
+
+export const DEFAULT_STAFF_MEMBERS: StaffOption[] = [
+  { id: "courier-ahmed", name: "أحمد المندوب (بغداد)", phone: "07701234567", role: "courier" },
+  { id: "operator-sajjad", name: "سجاد التشغيلي", phone: "07801122334", role: "operator" },
+  { id: "accountant-karrar", name: "كرار المحاسب", phone: "07505566778", role: "accountant" },
+];
+
 
 export interface CurrentUserProfile {
   id: string;
@@ -161,6 +175,9 @@ export function Dashboard() {
   const [viewMode, setViewMode] = useState<"table" | "cards">("table");
   const [selectedCourierFilter, setSelectedCourierFilter] = useState<string>("الكل");
   const [selectedStoreFilter, setSelectedStoreFilter] = useState<string>("الكل");
+  const [staffOptions, setStaffOptions] = useState<StaffOption[]>(DEFAULT_STAFF_MEMBERS);
+  const [selectedBulkCourier, setSelectedBulkCourier] = useState<string>("");
+  const [inspectedCourier, setInspectedCourier] = useState<string>("");
 
   // البحث المتقدم
   const [searchFilters, setSearchFilters] = useState({
@@ -218,7 +235,17 @@ export function Dashboard() {
           .eq("user_id", user.id)
           .single();
 
-        const resolvedRole = (roleRow?.role as UserRole) || (profile?.role as UserRole) || "courier";
+        const rawRole = String(roleRow?.role || profile?.role || "courier").toLowerCase();
+        let resolvedRole: UserRole = "courier";
+        if (["leader", "admin", "مدير", "قائد"].includes(rawRole)) {
+          resolvedRole = "leader";
+        } else if (["operator", "operations", "operation", "employee", "موظف", "تشغيلي", "موظف تشغيلي"].includes(rawRole)) {
+          resolvedRole = "operator";
+        } else if (["accountant", "محاسب"].includes(rawRole)) {
+          resolvedRole = "accountant";
+        } else {
+          resolvedRole = "courier";
+        }
 
         setUserProfile({
           id: user.id,
@@ -239,33 +266,77 @@ export function Dashboard() {
   const isAccountant = userProfile?.role === "accountant";
   const isCourier = userProfile?.role === "courier";
 
-  // شريط الأنظمة والتنقل الأصلي المعتمد بالكامل
-  const systemTabs = useMemo(() => [
-    { id: "home", label: "الرئيسية", icon: <TrendingUp className="w-5 h-5" /> },
-    { id: "search", label: "البحث المتقدم", icon: <Search className="w-5 h-5" /> },
-    { id: "unconfirmed", label: "طلبات غير مؤكدة", icon: <AlertTriangle className="w-5 h-5" /> },
-    { id: "pickup", label: "مندوب الاستلام", icon: <Truck className="w-5 h-5" /> },
-    { id: "internal", label: "طلبات داخلية (بغداد)", icon: <Package className="w-5 h-5" /> },
-    { id: "external", label: "طلبات خارجية (المحافظات)", icon: <Truck className="w-5 h-5" /> },
-    { id: "warehouse_returns", label: "الراجع للمخزن", icon: <RotateCcw className="w-5 h-5" /> },
-    { id: "partial_delivered", label: "واصل جزئي", icon: <CheckCircle2 className="w-5 h-5" /> },
-    { id: "partial_returned", label: "راجع جزئي", icon: <RotateCcw className="w-5 h-5" /> },
-    { id: "courier_settlement", label: "محاسبة المندوبين", icon: <FileSpreadsheet className="w-5 h-5" /> },
-    { id: "client_settlement", label: "محاسبة العملاء", icon: <Building2 className="w-5 h-5" /> },
-    { id: "waiting", label: "قيد الانتظار / مؤجل", icon: <Clock className="w-5 h-5" /> },
-    { id: "archives", label: "الأرشيف", icon: <Archive className="w-5 h-5" /> },
-    { id: "late", label: "طلبات متأخرة", icon: <RotateCcw className="w-5 h-5" /> },
-    { id: "comments", label: "الردود والملاحظات", icon: <MessageSquare className="w-5 h-5" /> },
-    { id: "lists", label: "كشوفات الحساب", icon: <FileSpreadsheet className="w-5 h-5" /> },
-    ...(isLeader ? [{ id: "branches", label: "تعديلات الفروع", icon: <Building2 className="w-5 h-5" /> }] : []),
-    { id: "inactive", label: "عملاء غير فعالين", icon: <UserX className="w-5 h-5" /> },
-    { id: "stickers", label: "توليد وصولات", icon: <Layers className="w-5 h-5" /> },
-    { id: "verification", label: "قيد التحقق", icon: <ShieldCheck className="w-5 h-5" /> },
-    ...(isLeader ? [
-      { id: "schedule", label: "مواعيد العمل", icon: <CalendarDays className="w-5 h-5" /> },
-      { id: "users", label: "إدارة الموظفين", icon: <Users className="w-5 h-5" /> }
-    ] : [])
-  ], [isLeader]);
+  // شريط الأنظمة والتنقل الأصلي المعتمد بالكامل مع تطبيق الصلاحيات الدقيقة
+  const systemTabs = useMemo(() => {
+    const all = [
+      { id: "home", label: "الرئيسية", icon: <TrendingUp className="w-5 h-5" />, courierAllowed: true },
+      { id: "search", label: "البحث المتقدم", icon: <Search className="w-5 h-5" />, courierAllowed: true },
+      { id: "unconfirmed", label: "طلبات غير مؤكدة", icon: <AlertTriangle className="w-5 h-5" />, courierAllowed: true },
+      { id: "pickup", label: "مندوب الاستلام", icon: <Truck className="w-5 h-5" />, courierAllowed: true },
+      { id: "internal", label: "طلبات داخلية (بغداد)", icon: <Package className="w-5 h-5" />, courierAllowed: true },
+      { id: "external", label: "طلبات خارجية (المحافظات)", icon: <Truck className="w-5 h-5" />, courierAllowed: true },
+      { id: "warehouse_returns", label: "الراجع للمخزن", icon: <RotateCcw className="w-5 h-5" />, courierAllowed: true },
+      { id: "partial_delivered", label: "واصل جزئي", icon: <CheckCircle2 className="w-5 h-5" />, courierAllowed: true },
+      { id: "partial_returned", label: "راجع جزئي", icon: <RotateCcw className="w-5 h-5" />, courierAllowed: true },
+      { id: "courier_settlement", label: "محاسبة المندوبين", icon: <FileSpreadsheet className="w-5 h-5" />, courierAllowed: false },
+      { id: "client_settlement", label: "محاسبة العملاء", icon: <Building2 className="w-5 h-5" />, courierAllowed: false },
+      { id: "waiting", label: "قيد الانتظار / مؤجل", icon: <Clock className="w-5 h-5" />, courierAllowed: true },
+      { id: "archives", label: "الأرشيف", icon: <Archive className="w-5 h-5" />, courierAllowed: true },
+      { id: "late", label: "طلبات متأخرة", icon: <RotateCcw className="w-5 h-5" />, courierAllowed: true },
+      { id: "comments", label: "الردود والملاحظات", icon: <MessageSquare className="w-5 h-5" />, courierAllowed: true },
+      { id: "lists", label: "كشوفات الحساب", icon: <FileSpreadsheet className="w-5 h-5" />, courierAllowed: false },
+      ...(isLeader ? [{ id: "branches", label: "تعديلات الفروع", icon: <Building2 className="w-5 h-5" />, courierAllowed: false }] : []),
+      { id: "inactive", label: "عملاء غير فعالين", icon: <UserX className="w-5 h-5" />, courierAllowed: false },
+      { id: "stickers", label: "توليد وصولات", icon: <Layers className="w-5 h-5" />, courierAllowed: true },
+      { id: "verification", label: "قيد التحقق", icon: <ShieldCheck className="w-5 h-5" />, courierAllowed: false },
+      ...(isLeader ? [
+        { id: "schedule", label: "مواعيد العمل", icon: <CalendarDays className="w-5 h-5" />, courierAllowed: false },
+        { id: "users", label: "إدارة الموظفين", icon: <Users className="w-5 h-5" />, courierAllowed: false }
+      ] : [])
+    ];
+
+    return all.filter((tab) => {
+      // المندوب محجوب تماماً عن أقسام المحاسبة والإدارة والكشوفات
+      if (isCourier && !tab.courierAllowed) return false;
+      return true;
+    });
+  }, [isLeader, isCourier]);
+
+  // حماية تلقائية: إذا حاول المندوب الدخول لقسم غير مصرح له به يُعاد فوراً إلى الرئيسية
+  useEffect(() => {
+    if (isCourier) {
+      const blockedForCourier = ["courier_settlement", "client_settlement", "users", "lists", "branches", "inactive", "verification", "schedule"];
+      if (blockedForCourier.includes(activeTab)) {
+        setActiveTab("home");
+      }
+    }
+  }, [isCourier, activeTab]);
+
+  // جلب قائمة الموظفين المسجلين في النظام لاستخدامها في القوائم المنسدلة للتعيين
+  useEffect(() => {
+    const fetchStaff = async () => {
+      try {
+        const { data: profs } = await supabase
+          .from("profiles")
+          .select("id, full_name, phone, role");
+        if (profs && profs.length > 0) {
+          const list: StaffOption[] = profs.map((p: any) => ({
+            id: p.id,
+            name: p.full_name || p.name || "موظف",
+            phone: p.phone || "",
+            role: p.role || "courier",
+          }));
+          const map = new Map<string, StaffOption>();
+          DEFAULT_STAFF_MEMBERS.forEach((s) => map.set(s.name, s));
+          list.forEach((s) => map.set(s.name, s));
+          setStaffOptions(Array.from(map.values()));
+        }
+      } catch (err) {
+        console.error("فشل جلب قائمة الموظفين:", err);
+      }
+    };
+    fetchStaff();
+  }, []);
 
   // دالة جلب الشحنات من Supabase مع دعم الفئات
   const fetchShipments = useCallback(async () => {
@@ -699,6 +770,96 @@ export function Dashboard() {
     return Object.values(map);
   }, [shipments]);
 
+  // قائمة المندوبين المتاحين (دمج الموظفين المسجلين مع المندوبين الظاهرين في الشحنات)
+  const availableCouriers = useMemo(() => {
+    const map = new Map<string, StaffOption>();
+    staffOptions.forEach((s) => {
+      if (s.name && s.name.trim()) map.set(s.name.trim(), s);
+    });
+    couriersBreakdown.forEach((c) => {
+      const name = c.driverName?.trim();
+      if (name && name !== "غير معيّن لمندوب" && name !== "الكل" && !map.has(name)) {
+        map.set(name, { id: name, name: name, phone: "", role: "courier" });
+      }
+    });
+    return Array.from(map.values());
+  }, [staffOptions, couriersBreakdown]);
+
+  // إحصائيات المندوب المختار في لوحة التتبع السريعة
+  const inspectedCourierStats = useMemo(() => {
+    if (!inspectedCourier || inspectedCourier === "الكل") return null;
+    return couriersBreakdown.find((c) => c.driverName === inspectedCourier) || null;
+  }, [inspectedCourier, couriersBreakdown]);
+
+  // دالة تحويل وتعيين الشحنات المحددة جماعياً للمندوب (Bulk Assign)
+  const handleBulkAssignDriver = async (targetDriverName: string) => {
+    if (!selectedIds.length) {
+      alert("يرجى تحديد الشحنات أولاً من المربعات في الجدول");
+      return;
+    }
+    if (!targetDriverName) {
+      alert("يرجى اختيار المندوب المراد تحويل الشحنات إليه من القائمة");
+      return;
+    }
+
+    const matched = availableCouriers.find((c) => c.name === targetDriverName);
+    const confirmed = window.confirm(
+      `هل أنت متأكد من تحويل ${selectedIds.length} شحنة إلى المندوب: (${targetDriverName}) وتغيير حالتها إلى [بحوزة المندوب]؟`
+    );
+    if (!confirmed) return;
+
+    setIsLoading(true);
+    try {
+      const updateData: Record<string, any> = {
+        driver_name: targetDriverName,
+        status: "بحوزة المندوب",
+      };
+      if (matched?.id && matched.id !== targetDriverName) {
+        updateData.driver_id = matched.id;
+      }
+
+      const { error } = await supabase
+        .from("shipments")
+        .update(updateData)
+        .in("id", selectedIds);
+
+      if (error) throw error;
+
+      setShipments((prev) =>
+        prev.map((s) =>
+          selectedIds.includes(s.id)
+            ? { ...s, driver_name: targetDriverName, driver_id: matched?.id || s.driver_id, status: "بحوزة المندوب" }
+            : s
+        )
+      );
+
+      alert(`تم تحويل ${selectedIds.length} شحنة بنجاح إلى المندوب: ${targetDriverName}`);
+      setSelectedIds([]);
+      setSelectedBulkCourier("");
+    } catch (err: any) {
+      console.error("فشل تحويل الشحنات للمندوب:", err);
+      alert("حدث خطأ أثناء تحويل الشحنات: " + (err.message || err));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // الشحنات المعروضة بعد تطبيق فلاتر المندوب والمتجر
+  const displayedShipments = useMemo(() => {
+    return shipments.filter((s) => {
+      if (selectedCourierFilter && selectedCourierFilter !== "الكل") {
+        const d = s.driver_name?.trim() || "غير معيّن لمندوب";
+        if (d !== selectedCourierFilter) return false;
+      }
+      if (selectedStoreFilter && selectedStoreFilter !== "الكل") {
+        const store = s.store_name?.trim() || "";
+        if (store !== selectedStoreFilter) return false;
+      }
+      return true;
+    });
+  }, [shipments, selectedCourierFilter, selectedStoreFilter]);
+
+
   // إحصائيات وتقارير العملاء وأصحاب البيجات المفصلة
   const clientsBreakdown = useMemo(() => {
     const map: Record<string, {
@@ -754,6 +915,7 @@ export function Dashboard() {
 
     return Object.values(map);
   }, [shipments]);
+
 
   // تحديد وتأشير جميع شحنات مندوب معين فوراً
   const handleSelectCourierShipments = (shipmentIds: string[], driverName: string) => {
@@ -954,17 +1116,27 @@ export function Dashboard() {
         </div>
       </aside>
 
-      {/* 2. القائمة الجانبية المنسدلة للهاتف (Mobile Drawer الحديث والسلس) */}
-      {isMobileMenuOpen && (
-        <div className="fixed inset-0 z-50 flex md:hidden">
-          {/* غطاء معتم بضبابية زجاجية للإغلاق عند اللمس */}
-          <div
-            className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity duration-300"
-            onClick={() => setIsMobileMenuOpen(false)}
-          />
+      {/* 2. القائمة الجانبية للهاتف (Mobile Drawer السلس بانتقال الرائد) */}
+      <div
+        className={`fixed inset-0 z-50 flex md:hidden transition-all duration-300 ease-in-out ${
+          isMobileMenuOpen ? "pointer-events-auto visible" : "pointer-events-none invisible"
+        }`}
+        aria-hidden={!isMobileMenuOpen}
+      >
+        {/* غطاء معتم بضبابية زجاجية للإغلاق عند اللمس */}
+        <div
+          className={`fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity duration-300 ease-in-out ${
+            isMobileMenuOpen ? "opacity-100" : "opacity-0"
+          }`}
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
 
-          {/* درج القائمة المنزلق من اليمين RTL */}
-          <div className="relative w-80 max-w-[85vw] bg-[#FFFDF7] h-full shadow-2xl border-l border-amber-300 flex flex-col justify-between z-10 transition-transform duration-300 ease-out">
+        {/* درج القائمة المنزلق بسلاسة تامة من اليمين RTL (نفس تطبيق الرائد) */}
+        <div
+          className={`relative w-80 max-w-[85vw] bg-[#FFFDF7] h-full shadow-2xl border-l border-amber-300 flex flex-col justify-between z-10 transform transition-transform duration-300 ease-in-out ${
+            isMobileMenuOpen ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
             <div>
               <div className="p-4 flex items-center justify-between border-b border-amber-200/80 bg-amber-50/50">
                 <div className="flex items-center gap-2.5">
@@ -1038,7 +1210,6 @@ export function Dashboard() {
             </div>
           </div>
         </div>
-      )}
 
       {/* 3. منطقة المحتوى والواجهة الرئيسية */}
       <div className="flex-1 flex flex-col min-w-0">
@@ -1090,7 +1261,7 @@ export function Dashboard() {
               </div>
               <span className="text-xs font-bold text-slate-800">{userProfile?.name}</span>
               <span className="text-[10px] bg-amber-200 px-1.5 py-0.5 rounded font-extrabold text-amber-950">
-                {userProfile?.role === "leader" ? "مدير" : userProfile?.role === "accountant" ? "محاسب" : "مندوب"}
+                {userProfile?.role === "leader" ? "مدير" : userProfile?.role === "operator" ? "موظف تشغيلي" : userProfile?.role === "accountant" ? "محاسب" : "مندوب"}
               </span>
             </div>
           </div>
@@ -1474,12 +1645,7 @@ export function Dashboard() {
                               <div className="flex items-center justify-center gap-1.5">
                                 <button
                                   onClick={() => handleSelectCourierShipments(c.shipmentIds, c.driverName)}
-                                  aria-pressed={selectedCourierFilter === c.driverName}
-                                  className={`px-2.5 py-1 font-bold text-[11px] rounded-lg transition border ${
-                                    selectedCourierFilter === c.driverName
-                                      ? "bg-blue-100 hover:bg-blue-200 text-blue-900 border-blue-300"
-                                      : "bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300"
-                                  }`}
+                                  className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-[11px] rounded-lg transition border border-amber-300"
                                   title="تأشير وتحديد شحنات هذا المندوب في الجدول"
                                 >
                                   تأشير المطلوب
@@ -1565,30 +1731,14 @@ export function Dashboard() {
 
               {/* جدول كشف حساب المتاجر والبيجات */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between">
                   <h4 className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
                     <Building2 className="w-4 h-4 text-indigo-700" />
                     <span>كشف حساب المتاجر وأصحاب البيجات:</span>
                   </h4>
-                  <div className="flex items-center gap-2">
-                    {selectedStoreFilter !== "الكل" && (
-                      <div className="flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-100 px-2 py-1 text-[11px] text-indigo-900 font-bold">
-                        <span>المتجر المحدد:</span>
-                        <span className="text-indigo-950">{selectedStoreFilter}</span>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedStoreFilter("الكل")}
-                          className="text-indigo-700 hover:text-indigo-950 transition"
-                          title="إلغاء تحديد المتجر"
-                        >
-                          إلغاء
-                        </button>
-                      </div>
-                    )}
-                    <span className="text-[11px] text-slate-500 font-semibold">
-                      عدد المتاجر: {clientsBreakdown.length}
-                    </span>
-                  </div>
+                  <span className="text-[11px] text-slate-500 font-semibold">
+                    عدد المتاجر: {clientsBreakdown.length}
+                  </span>
                 </div>
 
                 <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -1699,30 +1849,203 @@ export function Dashboard() {
           )}
 
           {/* جدول الشحنات الموحد: يظهر في جميع تبويبات الطلبات */}
+                    {/* لوحة متابعة وإرسال وصولات المندوبين (اختار مندوب حتى تشوف موصل وراجع وتدزله وصولات) */}
+          {!isCourier && !["users", "comments", "lists", "stickers"].includes(activeTab) && (
+            <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-blue-950 text-white rounded-2xl p-4 shadow-sm border border-slate-700 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-700/80 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-amber-400 text-slate-950 rounded-xl font-black shadow-xs">
+                    <Truck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-extrabold text-amber-300 flex items-center gap-2">
+                      <span>لوحة متابعة وإرسال وصولات المندوبين</span>
+                      <span className="text-[10px] bg-amber-400/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-400/30">
+                        تتبع فوري + تعيين سريع
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-300">
+                      اختر أي مندوب لمشاهدة ما تم تسليمه وما رجع بالتمام، وأرسل له وصولات جديدة بضغطة زر
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <select
+                    value={inspectedCourier}
+                    onChange={(e) => setInspectedCourier(e.target.value)}
+                    className="bg-slate-800 text-white border border-amber-400/60 rounded-xl px-3 py-1.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  >
+                    <option value="">-- اختر مندوباً لمتابعة أدائه وإرسال الشحنات --</option>
+                    {availableCouriers.map((c) => (
+                      <option key={c.id || c.name} value={c.name}>
+                        🚚 {c.name} {c.phone ? `(${c.phone})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {inspectedCourier && (
+                    <button
+                      type="button"
+                      onClick={() => setInspectedCourier("")}
+                      className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-xs transition"
+                      title="إلغاء اختيار المندوب"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {inspectedCourier ? (
+                <div className="space-y-3 animate-in fade-in">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                    <div className="bg-slate-800/90 border border-slate-700 rounded-xl p-2.5 text-center">
+                      <span className="block text-[10px] text-slate-400 font-bold">إجمالي الطلبات</span>
+                      <span className="text-base font-black text-white">{inspectedCourierStats?.totalCount || 0}</span>
+                    </div>
+                    <div className="bg-emerald-950/60 border border-emerald-600/50 rounded-xl p-2.5 text-center">
+                      <span className="block text-[10px] text-emerald-300 font-bold">تم التسليم (واصل)</span>
+                      <span className="text-base font-black text-emerald-400">{inspectedCourierStats?.deliveredCount || 0}</span>
+                    </div>
+                    <div className="bg-rose-950/60 border border-rose-600/50 rounded-xl p-2.5 text-center">
+                      <span className="block text-[10px] text-rose-300 font-bold">الرفض (راجع)</span>
+                      <span className="text-base font-black text-rose-400">{inspectedCourierStats?.rejectedCount || 0}</span>
+                    </div>
+                    <div className="bg-teal-950/60 border border-teal-600/50 rounded-xl p-2.5 text-center">
+                      <span className="block text-[10px] text-teal-300 font-bold">واصل/راجع جزئي</span>
+                      <span className="text-base font-black text-teal-400">
+                        {inspectedCourierStats?.partialDeliveredCount || 0} / {inspectedCourierStats?.partialReturnedCount || 0}
+                      </span>
+                    </div>
+                    <div className="bg-amber-950/60 border border-amber-600/50 rounded-xl p-2.5 text-center">
+                      <span className="block text-[10px] text-amber-300 font-bold">قيد التنفيذ / بحوزته</span>
+                      <span className="text-base font-black text-amber-400">
+                        {(inspectedCourierStats?.waitingCount || 0) + (inspectedCourierStats?.inProgressCount || 0)}
+                      </span>
+                    </div>
+                    <div className="bg-blue-950/60 border border-blue-600/50 rounded-xl p-2.5 text-center">
+                      <span className="block text-[10px] text-blue-300 font-bold">الصافي المستحق</span>
+                      <span className="text-xs font-mono font-black text-blue-300">
+                        {(inspectedCourierStats?.totalNet || 0).toLocaleString()} د.ع
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleBulkAssignDriver(inspectedCourier)}
+                        disabled={selectedIds.length === 0}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition shadow-xs ${
+                          selectedIds.length > 0
+                            ? "bg-amber-400 hover:bg-amber-300 text-slate-950 cursor-pointer animate-pulse"
+                            : "bg-slate-700/80 text-slate-400 cursor-not-allowed"
+                        }`}
+                        title={selectedIds.length > 0 ? "إرسال وتحويل الشحنات المحددة لهذا المندوب" : "حدد شحنات من الجدول أولاً"}
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>إرسال الشحنات المحددة ({selectedIds.length}) إلى ({inspectedCourier}) 🚀</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (selectedCourierFilter === inspectedCourier) {
+                            setSelectedCourierFilter("الكل");
+                          } else {
+                            setSelectedCourierFilter(inspectedCourier);
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border ${
+                          selectedCourierFilter === inspectedCourier
+                            ? "bg-blue-600 text-white border-blue-400"
+                            : "bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700"
+                        }`}
+                      >
+                        <Filter className="w-3.5 h-3.5" />
+                        <span>
+                          {selectedCourierFilter === inspectedCourier
+                            ? "إلغاء تصفية الجدول (عرض الكل)"
+                            : `تصفية الجدول لشحنات (${inspectedCourier}) فقط`}
+                        </span>
+                      </button>
+                    </div>
+
+                    {inspectedCourierStats?.shipmentIds && inspectedCourierStats.shipmentIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => handleSelectCourierShipments(inspectedCourierStats.shipmentIds, inspectedCourier)}
+                        className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold transition"
+                      >
+                        تأشير كافة وصولاته ({inspectedCourierStats.totalCount})
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2.5 bg-slate-800/40 rounded-xl border border-dashed border-slate-700 text-center text-xs text-slate-400">
+                  💡 اختر مندوباً من القائمة أعلاه لتظهر لك فوراً إحصائيات ما تم تسليمه وما رجع، وزر إرسال الوصولات المحددة إليه مباشرة.
+                </div>
+              )}
+            </div>
+          )}
+
           {!["users", "comments", "lists", "stickers"].includes(activeTab) && (
             <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm shadow-slate-900/[0.04] overflow-hidden">
               <div className="p-3 border-b border-amber-100 flex flex-wrap items-center justify-between gap-3 bg-amber-50/30">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={() => {
-                      if (selectedIds.length === shipments.length) setSelectedIds([]);
-                      else setSelectedIds(shipments.map(s => s.id));
+                      if (selectedIds.length === displayedShipments.length) setSelectedIds([]);
+                      else setSelectedIds(displayedShipments.map(s => s.id));
                     }}
-                    className="px-3 py-1.5 bg-white border border-amber-200 rounded-md text-xs font-bold text-slate-700 hover:bg-amber-50"
+                    className="px-3 py-1.5 bg-white border border-amber-200 rounded-md text-xs font-bold text-slate-700 hover:bg-amber-50 shadow-2xs"
                   >
                     {selectedIds.length > 0 ? "إلغاء التحديد" : "تحديد الكل"}
                   </button>
                   {selectedIds.length > 0 && (
-                    <span className="text-xs font-bold text-amber-900 bg-amber-100 px-2 py-1 rounded">
+                    <span className="text-xs font-extrabold text-amber-950 bg-amber-200 px-2.5 py-1 rounded-md shadow-2xs animate-pulse">
                       {selectedIds.length} محددة
                     </span>
+                  )}
+                  {/* شريط التعيين الجماعي بنمط الرائد للمندوب المختار */}
+                  {selectedIds.length > 0 && !isCourier && (
+                    <div className="flex items-center gap-1 bg-white border border-amber-300 rounded-lg p-0.5 shadow-2xs">
+                      <select
+                        value={selectedBulkCourier}
+                        onChange={(e) => setSelectedBulkCourier(e.target.value)}
+                        className="text-xs border-0 rounded-md p-1 bg-transparent font-bold text-slate-800 focus:outline-none"
+                      >
+                        <option value="">-- اختر المندوب للتحويل --</option>
+                        {availableCouriers.map((c) => (
+                          <option key={c.id || c.name} value={c.name}>
+                            🚚 {c.name} {c.phone ? `(${c.phone})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => handleBulkAssignDriver(selectedBulkCourier)}
+                        disabled={!selectedBulkCourier}
+                        className={`px-2.5 py-1 rounded-md text-xs font-extrabold flex items-center gap-1 transition ${
+                          selectedBulkCourier
+                            ? "bg-blue-800 hover:bg-blue-900 text-white cursor-pointer shadow-2xs"
+                            : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                        }`}
+                        title="تحويل الشحنات المحددة للمندوب وتغيير حالتها إلى بحوزة المندوب"
+                      >
+                        <Truck className="w-3.5 h-3.5" />
+                        <span>تحويل للمندوب</span>
+                      </button>
+                    </div>
                   )}
                   {selectedIds.length > 0 && (
                     <select
                       onChange={(e) => {
                         if (e.target.value) handleUpdateStatus(e.target.value);
                       }}
-                      className="text-xs border border-amber-200 rounded-md p-1 bg-white font-medium"
+                      className="text-xs border border-amber-200 rounded-md p-1.5 bg-white font-medium text-slate-700 shadow-2xs"
                       defaultValue=""
                     >
                       <option value="" disabled>تغيير الحالة للمحددة...</option>
@@ -1730,6 +2053,20 @@ export function Dashboard() {
                         <option key={s} value={s}>{s}</option>
                       ))}
                     </select>
+                  )}
+
+                  {selectedCourierFilter !== "الكل" && (
+                    <div className="flex items-center gap-1 px-2.5 py-1 bg-blue-100 text-blue-900 border border-blue-300 rounded-md text-xs font-bold">
+                      <span>فلتر المندوب: {selectedCourierFilter}</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCourierFilter("الكل")}
+                        className="text-blue-700 hover:text-blue-950 font-black mr-1"
+                        title="إلغاء الفلترة وعرض الكل"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -1780,12 +2117,12 @@ export function Dashboard() {
               {viewMode === "cards" ? (
                 /* عرض البطاقات الذكية المتجاوب للهاتف والشاشات الصغيرة */
                 <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 bg-slate-50/50">
-                  {shipments.length === 0 ? (
+                  {displayedShipments.length === 0 ? (
                     <div className="col-span-full p-8 text-center text-slate-500 bg-white rounded-2xl border border-slate-200">
                       لا توجد شحنات مطابقة للقسم أو الفلتر الحالي
                     </div>
                   ) : (
-                    shipments.map((s) => {
+                    displayedShipments.map((s) => {
                       const isSelected = selectedIds.includes(s.id);
                       const theme = getStatusTheme(s.status, isSelected);
                       const isBaghdad = (s.city || "").includes("بغداد");
@@ -1988,14 +2325,14 @@ export function Dashboard() {
                           جارٍ تحميل البيانات...
                         </td>
                       </tr>
-                    ) : shipments.length === 0 ? (
+                    ) : displayedShipments.length === 0 ? (
                       <tr>
                         <td colSpan={12} className="p-8 text-center text-slate-400 font-medium">
                           لا توجد طلبات مسجلة في هذا القسم حالياً.
                         </td>
                       </tr>
                     ) : (
-                      shipments.map((s) => {
+                      displayedShipments.map((s) => {
                         const isSelected = selectedIds.includes(s.id);
                         const theme = getStatusTheme(s.status, isSelected);
                         const isBaghdad = (s.city || "").includes("بغداد");
@@ -2361,14 +2698,27 @@ export function Dashboard() {
               </div>
 
               <div>
-                <label className="font-bold text-slate-600 block mb-1">المندوب المخصص</label>
-                <input
-                  type="text"
+                <label className="font-bold text-slate-600 block mb-1">المندوب المخصص (اختيار تلقائي من المسجلين)</label>
+                <select
                   value={editFormData.driver_name || ""}
-                  onChange={(e) => setEditFormData(p => ({ ...p, driver_name: e.target.value }))}
-                  placeholder="اسم المندوب..."
-                  className="w-full p-2 bg-amber-50/30 border border-amber-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                />
+                  onChange={(e) => {
+                    const chosen = e.target.value;
+                    const matched = availableCouriers.find(c => c.name === chosen);
+                    setEditFormData(p => ({
+                      ...p,
+                      driver_name: chosen,
+                      driver_id: matched?.id || p.driver_id,
+                    }));
+                  }}
+                  className="w-full p-2 bg-amber-50/30 border border-amber-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                >
+                  <option value="">-- غير مخصص لمندوب --</option>
+                  {availableCouriers.map((c) => (
+                    <option key={c.id || c.name} value={c.name}>
+                      🚚 {c.name} {c.phone ? `(${c.phone})` : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {/* إذا تم اختيار حالة راجع: يظهر حقل سبب الراجع إجبارياً */}
@@ -2584,14 +2934,19 @@ export function Dashboard() {
               </div>
 
               <div>
-                <label className="font-bold text-slate-600 block mb-1">المندوب (اختياري)</label>
-                <input
-                  type="text"
+                <label className="font-bold text-slate-600 block mb-1">المندوب المخصص (اختياري مع رقم الهاتف)</label>
+                <select
                   value={newOrder.driver_name}
                   onChange={(e) => setNewOrder(p => ({ ...p, driver_name: e.target.value }))}
-                  placeholder="اسم المندوب إن وُجد..."
-                  className="w-full p-2 bg-amber-50/30 border border-amber-200 rounded-lg"
-                />
+                  className="w-full p-2 bg-amber-50/30 border border-amber-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                >
+                  <option value="">-- اختر المندوب من القائمة --</option>
+                  {availableCouriers.map((c) => (
+                    <option key={c.id || c.name} value={c.name}>
+                      🚚 {c.name} {c.phone ? `(${c.phone})` : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="col-span-2">
