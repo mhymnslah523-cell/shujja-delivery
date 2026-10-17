@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { 
+  Printer,
   TrendingUp, Search, AlertTriangle, Truck, Package, 
   Clock, Archive, RotateCcw, MessageSquare, FileSpreadsheet, 
   Building2, UserX, Layers, ShieldCheck, CalendarDays, 
@@ -196,6 +197,10 @@ export function Dashboard() {
 
   // حالة نافذة تعديل الوصل
   const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
+  const [manifestCourier, setManifestCourier] = useState<string>('');
+  const [manifestShipments, setManifestShipments] = useState<Shipment[]>([]);
+  const [showManifestModal, setShowManifestModal] = useState<boolean>(false);
+
   const [editFormData, setEditFormData] = useState<Partial<Shipment>>({});
 
   // حالة نافذة إضافة طلب جديد
@@ -263,6 +268,7 @@ export function Dashboard() {
   }, []);
 
   const isLeader = userProfile?.role === "leader";
+  const isOperator = userProfile?.role === "operator";
   const isAccountant = userProfile?.role === "accountant";
   const isCourier = userProfile?.role === "courier";
 
@@ -653,21 +659,43 @@ export function Dashboard() {
     }
   };
 
-  // تأكيد استلام الوصل بالمخزن (للمدير)
+  // تأكيد استلام الوصل بالمخزن (للمدير والمشغل التشغيلي)
   const handleConfirmWarehouseReceipt = async (shipmentId: string) => {
-    if (!isLeader) return;
+    if (!isLeader && !isOperator) {
+      alert("عذراً، تأكيد استلام الراجع محصور بالقائد والموظف التشغيلي.");
+      return;
+    }
     try {
       const { error } = await supabase
         .from("shipments")
-        .update({ notes: "تم استلام الطرد فعلياً في المخزن وتدقيقه." })
+        .update({ 
+          status: "راجع للمخزن (مستلم)",
+          notes: "تم استلام الطرد في المخزن وتدقيقه بنجاح بواسطة مسؤول العمليات." 
+        })
         .eq("id", shipmentId);
       if (!error) {
-        alert("تم تأكيد استلام الشحنة في المخزن بنجاح.");
-        fetchShipments();
+        alert("تم تأكيد استلام الشحنة في المخزن بنجاح وتثبيت حالتها.");
+        setShipments(prev => prev.map(s => s.id === shipmentId ? { ...s, status: "راجع للمخزن (مستلم)", notes: "تم استلام الطرد في المخزن وتدقيقه بنجاح." } : s));
+      } else {
+        alert("فشل تحديث الحالة: " + error.message);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      alert("حدث خطأ أثناء تأكيد استلام الراجع");
     }
+  };
+
+  // فتح نافذة مانيفست التسليم
+  const handleOpenManifest = (courierName?: string) => {
+    const targetCourier = courierName || selectedBulkCourier || "";
+    const list = shipments.filter(s => selectedIds.includes(s.id));
+    if (list.length === 0) {
+      alert("يرجى تحديد شحنة واحدة على الأقل لطباعة المانيفست.");
+      return;
+    }
+    setManifestCourier(targetCourier || list[0]?.driver_name || "غير محدد");
+    setManifestShipments(list);
+    setShowManifestModal(true);
   };
 
   const handleLogout = async () => {
@@ -2038,6 +2066,15 @@ export function Dashboard() {
                         <Truck className="w-3.5 h-3.5" />
                         <span>تحويل للمندوب</span>
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenManifest()}
+                        className="px-2.5 py-1 rounded-md text-xs font-extrabold flex items-center gap-1 bg-amber-600 hover:bg-amber-700 text-white cursor-pointer shadow-2xs transition"
+                        title="طباعة مانيفست رسمي لتسليم الشحنات المحددة للمندوب"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>طباعة مانيفست</span>
+                      </button>
                     </div>
                   )}
                   {selectedIds.length > 0 && (
@@ -2502,6 +2539,133 @@ export function Dashboard() {
       </div>
 
       {/* 4. نافذة تعديل الوصل (مع حماية وقت الإنشاء وضبط صلاحيات المدير والمحاسب والمندوب) */}
+      
+      {/* نافذة مانيفست تسليم المندوب القابلة للطباعة الرسمية A4 */}
+      {showManifestModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-4xl p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto print:max-h-none print:shadow-none print:border-none print:p-0">
+            {/* أزرار التحكم بالطباعة والإغلاق - مخفية عند الطباعة */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 print:hidden">
+              <div className="flex items-center gap-2 text-slate-800">
+                <Printer className="w-5 h-5 text-amber-600" />
+                <h3 className="font-extrabold text-base">مانيفست تسليم الشحنات للمندوب (ورقة تسليم رسمية)</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs rounded-xl shadow flex items-center gap-2 transition"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>طباعة فورية (Print)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowManifestModal(false)}
+                  className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition"
+                >
+                  إغلاق
+                </button>
+              </div>
+            </div>
+
+            {/* ورقة المانيفست الفعلية المطبوعة */}
+            <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-4 print:border-none print:p-0" dir="rtl">
+              {/* ترويسة الشركة */}
+              <div className="flex items-center justify-between border-b-2 border-slate-800 pb-3">
+                <div>
+                  <h1 className="text-xl font-black text-slate-900">منصة الشجاع للتوصيل السريع</h1>
+                  <p className="text-xs text-slate-600">مانيفست وقائمة تسليم عهدة طرود للمندوب</p>
+                </div>
+                <div className="text-left font-mono text-xs text-slate-700 space-y-0.5" dir="ltr">
+                  <div><strong>Date:</strong> {new Date().toLocaleDateString("ar-IQ")}</div>
+                  <div><strong>Time:</strong> {new Date().toLocaleTimeString("ar-IQ")}</div>
+                </div>
+              </div>
+
+              {/* بيانات المندوب والعهدة */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-amber-50/80 p-3 rounded-xl border border-amber-200 text-xs">
+                <div>
+                  <span className="text-slate-500 block">اسم المندوب:</span>
+                  <span className="font-extrabold text-slate-900 text-sm">{manifestCourier || "غير محدد"}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">عدد الطرود:</span>
+                  <span className="font-extrabold text-amber-900 text-sm">{manifestShipments.length} طرد</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">المبلغ الإجمالي للتحصيل:</span>
+                  <span className="font-extrabold text-emerald-800 text-sm">
+                    {manifestShipments.reduce((sum, s) => sum + (Number(s.amount) || 0), 0).toLocaleString()} د.ع
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">مسؤول التجهيز:</span>
+                  <span className="font-bold text-slate-800">{userProfile?.name || "المدير العام"}</span>
+                </div>
+              </div>
+
+              {/* جدول الشحنات */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-right border-collapse border border-slate-300">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-800 font-extrabold border-b border-slate-300">
+                      <th className="p-2 border border-slate-300 text-center w-8">#</th>
+                      <th className="p-2 border border-slate-300">رقم الوصل</th>
+                      <th className="p-2 border border-slate-300">اسم الزبون</th>
+                      <th className="p-2 border border-slate-300">رقم الهاتف</th>
+                      <th className="p-2 border border-slate-300">المحافظة / المنطقة</th>
+                      <th className="p-2 border border-slate-300">المتجر (البيج)</th>
+                      <th className="p-2 border border-slate-300 text-left">المبلغ المطلوب</th>
+                      <th className="p-2 border border-slate-300 text-center">التوقيع / الحالة</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {manifestShipments.map((s, idx) => (
+                      <tr key={s.id} className="border-b border-slate-300 hover:bg-slate-50">
+                        <td className="p-2 border border-slate-300 text-center font-bold">{idx + 1}</td>
+                        <td className="p-2 border border-slate-300 font-mono font-extrabold text-amber-950">{s.waybill_number}</td>
+                        <td className="p-2 border border-slate-300 font-bold">{s.recipient_name}</td>
+                        <td className="p-2 border border-slate-300 font-mono" dir="ltr">{s.recipient_phone}</td>
+                        <td className="p-2 border border-slate-300">{s.city} - {s.area}</td>
+                        <td className="p-2 border border-slate-300 text-slate-600">{s.store_name}</td>
+                        <td className="p-2 border border-slate-300 font-extrabold text-slate-900 text-left font-mono">
+                          {(Number(s.amount) || 0).toLocaleString()} د.ع
+                        </td>
+                        <td className="p-2 border border-slate-300 text-center text-slate-400">
+                          [ &nbsp; &nbsp; &nbsp; &nbsp; ]
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-amber-100 font-black text-slate-900 border-t-2 border-slate-400">
+                      <td colSpan={6} className="p-2 text-right">المجموع الكلي المطلوب من المندوب:</td>
+                      <td className="p-2 text-left font-mono text-emerald-900">
+                        {manifestShipments.reduce((sum, s) => sum + (Number(s.amount) || 0), 0).toLocaleString()} د.ع
+                      </td>
+                      <td className="p-2"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              {/* ذيل الورقة والتواقيع الرسمية */}
+              <div className="grid grid-cols-2 gap-8 pt-6 border-t border-slate-300 text-xs">
+                <div className="space-y-6">
+                  <p className="font-bold text-slate-800">توقيع مسؤول التوزيع والمخزن: _____________________</p>
+                  <p className="text-[11px] text-slate-500">تم تسليم الطرود المبينة أعلاه بحالة سليمة وجاهزة للتوصيل.</p>
+                </div>
+                <div className="space-y-6 text-left" dir="ltr">
+                  <p className="font-bold text-slate-800">Courier Signature: _____________________</p>
+                  <p className="text-[11px] text-slate-500">I acknowledge receiving the parcels and am responsible for their amounts.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {editingShipment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl overflow-hidden animate-in fade-in zoom-in-95">
