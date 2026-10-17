@@ -1,16 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+// ✅ ضع هذا بدلاً منه:
 import { 
   UserPlus, 
   Trash2, 
-  ShieldCheck, 
   UserCheck, 
   ShieldAlert, 
   Eye, 
   EyeOff, 
-  Copy, 
-  KeyRound, 
-  Mail 
+  Copy 
 } from 'lucide-react';
 
 interface Staff {
