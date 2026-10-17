@@ -1,13 +1,9 @@
 {
+  "id": "/?source=pwa",
   "short_name": "الشجاع",
   "name": "منصة الشجاع للتوصيل السريع",
   "description": "منظومة إدارة وتتبع الشحنات والطرود",
   "icons": [
-    {
-      "src": "/favicon.ico",
-      "sizes": "64x64 32x32 24x24 16x16",
-      "type": "image/x-icon"
-    },
     {
       "src": "/icon-192.png",
       "type": "image/png",
@@ -21,6 +17,14 @@
       "purpose": "any maskable"
     }
   ],
+  "screenshots": [
+    {
+      "src": "/screenshot.png",
+      "type": "image/png",
+      "sizes": "540x720",
+      "form_factor": "narrow"
+    }
+  ],
   "start_url": "/",
   "background_color": "#ffffff",
   "theme_color": "#1e40af",
@@ -28,4 +32,4 @@
   "orientation": "portrait",
   "dir": "rtl",
   "lang": "ar"
-}
+}?source=pwa",
