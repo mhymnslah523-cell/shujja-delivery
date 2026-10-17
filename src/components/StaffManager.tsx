@@ -1,14 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { UserPlus, Trash2, ShieldCheck, UserCheck, ShieldAlert } from 'lucide-react';
-
-export type StaffRole = 'leader' | 'operator' | 'accountant' | 'courier';
+import { 
+  UserPlus, 
+  Trash2, 
+  ShieldCheck, 
+  UserCheck, 
+  ShieldAlert, 
+  Eye, 
+  EyeOff, 
+  Copy, 
+  KeyRound, 
+  Mail 
+} from 'lucide-react';
 
 interface Staff {
   id: string;
   name: string;
   email: string;
-  phone?: string;
+  password?: string;
   role: string;
   created_at?: string;
 }
@@ -21,15 +30,24 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ isLeader }) => {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<StaffRole>('courier');
+  const [role, setRole] = useState<'leader' | 'accountant' | 'courier' | 'employee'>('employee');
   const [loading, setLoading] = useState(false);
+  const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [msg, setMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   const notify = (text: string, type: 'success' | 'error' = 'success') => {
     setMsg({ text, type });
     setTimeout(() => setMsg(null), 4000);
+  };
+
+  const togglePasswordVisibility = (id: string) => {
+    setVisiblePasswords((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    notify(`تم نسخ ${label} إلى الحافظة`);
   };
 
   const loadStaff = async () => {
@@ -40,7 +58,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ isLeader }) => {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('فشل جلب الموظفين:', error);
+        console.error(error);
       } else if (data) {
         setStaff(data as Staff[]);
       }
@@ -60,36 +78,53 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ isLeader }) => {
       return;
     }
 
-    if (password.length < 6) {
-      notify('كلمة المرور يجب ألا تقل عن 6 أحرف', 'error');
-      return;
-    }
-
     try {
       setLoading(true);
-
-      // استدعاء دالة create_staff_member الآمنة في Supabase
-      const { error } = await supabase.rpc('create_staff_member', {
-        new_email: email.trim().toLowerCase(),
-        new_password: password,
-        new_full_name: name.trim(),
-        new_phone: phone.trim(),
-        new_role: role
+      // 1. إنشاء الحساب في Supabase Auth
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: password.trim(),
+        options: {
+          data: { name: name.trim() }
+        }
       });
 
-      if (error) {
-        notify('فشل إضافة الموظف: ' + error.message, 'error');
+      if (authError) {
+        notify('خطأ في إنشاء الحساب: ' + authError.message, 'error');
+        return;
+      }
+
+      const userId = authData.user?.id;
+      if (!userId) {
+        notify('تعذر استلام معرف الحساب الجديد', 'error');
+        return;
+      }
+
+      // 2. حفظ البيانات بما فيها كلمة السر والبريد لكي يراها القائد
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert([
+          { 
+            id: userId, 
+            name: name.trim(), 
+            email: email.trim(), 
+            password: password.trim(), 
+            role: role 
+          }
+        ]);
+
+      if (profileError) {
+        notify('تم إنشاء البريد ولكن حدث خطأ في حفظ بيانات الملف: ' + profileError.message, 'error');
       } else {
-        notify(`تمت إضافة الموظف (${name.trim()}) بنجاح ويمكنه الدخول فوراً`);
+        notify(`تمت إضافة الموظف (${name.trim()}) بنجاح`);
         setName('');
         setEmail('');
-        setPhone('');
         setPassword('');
-        setRole('courier');
+        setRole('employee');
         loadStaff();
       }
     } catch (err: any) {
-      notify('حدث خطأ غير متوقع: ' + (err.message || ''), 'error');
+      notify('حدث خطأ غير متوقع', 'error');
     } finally {
       setLoading(false);
     }
@@ -103,24 +138,28 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ isLeader }) => {
     if (!window.confirm(`هل أنت متأكد من حذف الموظف: ${staffName} نهائياً؟`)) return;
 
     try {
-      const { error } = await supabase.rpc('delete_staff_member', {
-        target_user_id: id
-      });
-
+      const { error } = await supabase.from('profiles').delete().eq('id', id);
       if (error) {
-        const { error: directErr } = await supabase.from('profiles').delete().eq('id', id);
-        if (directErr) {
-          notify('فشل الحذف من قاعدة البيانات: ' + directErr.message, 'error');
-        } else {
-          notify(`تم حذف الموظف (${staffName}) بنجاح`);
-          loadStaff();
-        }
+        notify('فشل الحذف من قاعدة البيانات: ' + error.message, 'error');
       } else {
-        notify(`تم حذف الموظف (${staffName}) وحسابه نهائياً`);
+        notify(`تم حذف الموظف (${staffName}) بنجاح`);
         loadStaff();
       }
     } catch (err: any) {
       notify('حدث خطأ أثناء تنفيذ الحذف', 'error');
+    }
+  };
+
+  const getRoleBadge = (roleName: string) => {
+    switch (roleName) {
+      case 'leader':
+        return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800">قائد النظام</span>;
+      case 'accountant':
+        return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-800">محاسب</span>;
+      case 'courier':
+        return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">مندوب توصيل</span>;
+      default:
+        return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800">موظف تشغيلي</span>;
     }
   };
 
@@ -139,88 +178,63 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ isLeader }) => {
         </div>
       )}
 
-      {/* قسم إضافة موظف جديد */}
+      {/* نموذج إضافة موظف جديد - يظهر للقائد فقط */}
       {isLeader && (
-        <div className="bg-white rounded-xl shadow-sm border border-amber-200/80 p-5">
-          <div className="flex items-center justify-between pb-3 mb-4 border-b border-amber-100">
-            <div className="flex items-center gap-2">
-              <UserPlus size={18} className="text-amber-800" />
-              <h3 className="font-bold text-slate-800 text-sm">إضافة موظف جديد للنظام</h3>
-            </div>
-
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+          <div className="flex items-center gap-2 pb-3 mb-4 border-b border-slate-100">
+            <UserPlus size={18} className="text-blue-800" />
+            <h3 className="font-bold text-slate-800 text-sm">إضافة موظف جديد للنظام</h3>
           </div>
 
-          <form onSubmit={handleAddStaff} className="grid grid-cols-1 md:grid-cols-6 gap-3">
+          <form onSubmit={handleAddStaff} className="grid grid-cols-1 md:grid-cols-5 gap-3">
             <div>
-              <label htmlFor="staff-name-inp" className="block text-xs font-semibold text-slate-600 mb-1">الاسم الكامل *</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">الاسم الكامل *</label>
               <input
-                id="staff-name-inp"
-                name="staff-name"
                 type="text"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="اسم الموظف"
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-800"
               />
             </div>
 
             <div>
-              <label htmlFor="staff-phone-inp" className="block text-xs font-semibold text-slate-600 mb-1">رقم الهاتف *</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">البريد الإلكتروني *</label>
               <input
-                id="staff-phone-inp"
-                name="staff-phone"
-                type="tel"
-                required
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="0770XXXXXXX"
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="staff-email-inp" className="block text-xs font-semibold text-slate-600 mb-1">البريد الإلكتروني *</label>
-              <input
-                id="staff-email-inp"
-                name="staff-email"
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="user@shujaa.com"
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-800"
               />
             </div>
 
             <div>
-              <label htmlFor="staff-pass-inp" className="block text-xs font-semibold text-slate-600 mb-1">كلمة المرور *</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">كلمة المرور / الرمز *</label>
               <input
-                id="staff-pass-inp"
-                name="staff-password"
-                type="password"
+                type="text"
                 required
                 minLength={6}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="******"
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                placeholder="كلمة المرور"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-800 font-mono"
               />
             </div>
 
             <div>
-              <label htmlFor="staff-role-sel" className="block text-xs font-semibold text-slate-600 mb-1">نوع الصلاحية *</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">نوع الدور *</label>
               <select
-                id="staff-role-sel"
-                name="staff-role"
                 value={role}
-                onChange={(e) => setRole(e.target.value as StaffRole)}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                onChange={(e) => setRole(e.target.value as any)}
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-800 bg-white"
               >
-                <option value="courier">🚚 مندوب توصيل</option>
-                <option value="operator">⚙️ موظف تشغيلي</option>
-                <option value="accountant">💰 محاسب مالي</option>
-                <option value="leader">👑 قائد / مدير نظام</option>
+                <option value="employee">موظف تشغيلي</option>
+                <option value="courier">مندوب توصيل</option>
+                <option value="accountant">محاسب</option>
+                <option value="leader">قائد / مدير نظام</option>
               </select>
             </div>
 
@@ -228,7 +242,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ isLeader }) => {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-2 px-4 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-sm transition disabled:opacity-50"
+                className="w-full py-2 px-4 rounded-lg bg-blue-800 hover:bg-blue-900 text-white font-semibold text-xs shadow-sm transition disabled:opacity-50"
               >
                 {loading ? 'جاري الإضافة...' : 'حفظ الموظف'}
               </button>
@@ -237,12 +251,19 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ isLeader }) => {
         </div>
       )}
 
-      {/* جدول عرض الموظفين */}
-      <div className="bg-white rounded-xl shadow-sm border border-amber-200/80 overflow-hidden">
-        <div className="p-4 bg-amber-50/60 border-b border-amber-200/80 flex items-center justify-between">
-          <span className="font-bold text-slate-800 text-xs">قائمة كادر العمل المسجلين في المنصة</span>
-          <span className="px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 font-bold text-xs">
-            {staff.length} مستخدم
+      {/* جدول كادر العمل */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-slate-800 text-xs">قائمة كادر العمل والبيانات السرية</span>
+            {isLeader && (
+              <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded font-semibold">
+                عرض خاص بالقائد
+              </span>
+            )}
+          </div>
+          <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold text-xs">
+            {staff.length} حساب
           </span>
         </div>
 
@@ -254,50 +275,86 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ isLeader }) => {
               <thead className="bg-slate-100/75 border-b border-slate-200 text-slate-600">
                 <tr>
                   <th className="py-2.5 px-4 font-semibold">اسم الموظف</th>
-                  <th className="py-2.5 px-4 font-semibold">رقم الهاتف</th>
-                  <th className="py-2.5 px-4 font-semibold">البريد الإلكتروني</th>
-                  <th className="py-2.5 px-4 font-semibold">الصلاحية</th>
-                  <th className="py-2.5 px-4 font-semibold text-center">إجراءات</th>
+                  <th className="py-2.5 px-4 font-semibold">الدور / الصلاحية</th>
+                  {isLeader && <th className="py-2.5 px-4 font-semibold">البريد الإلكتروني</th>}
+                  {isLeader && <th className="py-2.5 px-4 font-semibold">كلمة المرور</th>}
+                  {isLeader && <th className="py-2.5 px-4 font-semibold text-center">إجراءات</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {staff.map((member) => (
-                  <tr key={member.id} className="hover:bg-amber-50/40 transition">
-                    <td className="py-3 px-4 font-bold text-slate-800">{member.name}</td>
-                    <td className="py-3 px-4 text-slate-600 font-mono">{member.phone || '—'}</td>
-                    <td className="py-3 px-4 text-slate-600 font-mono">{member.email}</td>
-                    <td className="py-3 px-4">
-                      {member.role === 'leader' ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                          <ShieldCheck size={12} /> قائد النظام
-                        </span>
-                      ) : member.role === 'operator' ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-900 border border-blue-200">
-                          ⚙️ موظف تشغيلي
-                        </span>
-                      ) : member.role === 'accountant' ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-200">
-                          💰 محاسب
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-900 border border-purple-200">
-                          🚚 مندوب توصيل
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-center">
+                {staff.map((member) => {
+                  const isPassVisible = visiblePasswords[member.id] || false;
+                  return (
+                    <tr key={member.id} className="hover:bg-slate-50/70 transition">
+                      <td className="py-3 px-4 font-bold text-slate-800">{member.name}</td>
+                      <td className="py-3 px-4">{getRoleBadge(member.role)}</td>
+                      
+                      {/* البريد الإلكتروني (للقائد فقط) */}
                       {isLeader && (
-                        <button
-                          onClick={() => handleDeleteStaff(member.id, member.name)}
-                          title="حذف هذا الموظف"
-                          className="p-1.5 rounded-md text-red-600 hover:bg-red-50 transition border border-transparent hover:border-red-200"
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-slate-700 bg-slate-100 px-2 py-1 rounded text-[11px]">
+                              {member.email || 'غير مسجل'}
+                            </span>
+                            {member.email && (
+                              <button
+                                onClick={() => copyToClipboard(member.email, 'البريد الإلكتروني')}
+                                title="نسخ البريد"
+                                className="text-slate-400 hover:text-blue-700 transition"
+                              >
+                                <Copy size={13} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
                       )}
-                    </td>
-                  </tr>
-                ))}
+
+                      {/* كلمة المرور (للقائد فقط) */}
+                      {isLeader && (
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-semibold text-slate-800 bg-amber-50/80 border border-amber-200/60 px-2 py-1 rounded text-[11px] tracking-wider">
+                              {member.password ? (isPassVisible ? member.password : '••••••••') : 'غير محفوظة'}
+                            </span>
+                            {member.password && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => togglePasswordVisibility(member.id)}
+                                  className="text-slate-400 hover:text-slate-700 transition"
+                                  title={isPassVisible ? 'إخفاء' : 'إظهار'}
+                                >
+                                  {isPassVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => copyToClipboard(member.password!, 'كلمة المرور')}
+                                  className="text-slate-400 hover:text-blue-700 transition"
+                                  title="نسخ كلمة المرور"
+                                >
+                                  <Copy size={13} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      )}
+
+                      {/* حذف الموظف (للقائد فقط) */}
+                      {isLeader && (
+                        <td className="py-3 px-4 text-center">
+                          <button
+                            onClick={() => handleDeleteStaff(member.id, member.name)}
+                            title="حذف هذا الموظف"
+                            className="p-1.5 rounded-md text-red-600 hover:bg-red-50 transition border border-transparent hover:border-red-200"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
