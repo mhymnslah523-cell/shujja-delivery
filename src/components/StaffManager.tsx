@@ -60,41 +60,27 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ isLeader }) => {
       return;
     }
 
+    if (password.length < 6) {
+      notify('كلمة المرور يجب ألا تقل عن 6 أحرف', 'error');
+      return;
+    }
+
     try {
       setLoading(true);
-      let userId = `staff-${Date.now()}`;
 
-      // محاولة إنشاء حساب في Supabase Auth إذا كان متاحاً
-      try {
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-          email: email.trim(),
-          password: password,
-          options: {
-            data: { name: name.trim(), phone: phone.trim(), role: role }
-          }
-        });
-        if (!authError && authData.user?.id) {
-          userId = authData.user.id;
-        }
-      } catch (err) {
-        console.warn('تعذر إنشاء حساب Auth، سيتم الحفظ مباشرة في profiles:', err);
-      }
+      // استدعاء دالة create_staff_member الآمنة في Supabase
+      const { error } = await supabase.rpc('create_staff_member', {
+        new_email: email.trim().toLowerCase(),
+        new_password: password,
+        new_full_name: name.trim(),
+        new_phone: phone.trim(),
+        new_role: role
+      });
 
-      // إضافة الموظف وصلاحيته ورقم هاتفه لجدول profiles بحقول متوافقة تماماً مع قاعدة البيانات
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .upsert([{ 
-          id: userId, 
-          full_name: name.trim(),
-          username: email ? email.split('@')[0] : name.trim(),
-          phone: phone.trim(),
-          role: role 
-        }]);
-
-      if (profileError) {
-        notify('فشل حفظ الموظف في قاعدة البيانات: ' + profileError.message, 'error');
+      if (error) {
+        notify('فشل إضافة الموظف: ' + error.message, 'error');
       } else {
-        notify(`تمت إضافة (${name.trim()}) بنجاح`);
+        notify(`تمت إضافة الموظف (${name.trim()}) بنجاح ويمكنه الدخول فوراً`);
         setName('');
         setEmail('');
         setPhone('');
@@ -103,7 +89,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ isLeader }) => {
         loadStaff();
       }
     } catch (err: any) {
-      notify('حدث خطأ غير متوقع', 'error');
+      notify('حدث خطأ غير متوقع: ' + (err.message || ''), 'error');
     } finally {
       setLoading(false);
     }
@@ -117,11 +103,20 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ isLeader }) => {
     if (!window.confirm(`هل أنت متأكد من حذف الموظف: ${staffName} نهائياً؟`)) return;
 
     try {
-      const { error } = await supabase.from('profiles').delete().eq('id', id);
+      const { error } = await supabase.rpc('delete_staff_member', {
+        target_user_id: id
+      });
+
       if (error) {
-        notify('فشل الحذف من قاعدة البيانات: ' + error.message, 'error');
+        const { error: directErr } = await supabase.from('profiles').delete().eq('id', id);
+        if (directErr) {
+          notify('فشل الحذف من قاعدة البيانات: ' + directErr.message, 'error');
+        } else {
+          notify(`تم حذف الموظف (${staffName}) بنجاح`);
+          loadStaff();
+        }
       } else {
-        notify(`تم حذف الموظف (${staffName}) بنجاح`);
+        notify(`تم حذف الموظف (${staffName}) وحسابه نهائياً`);
         loadStaff();
       }
     } catch (err: any) {
