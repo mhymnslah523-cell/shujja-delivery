@@ -1,21 +1,52 @@
 <!doctype html>
-<html lang="en">
+<html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>shujaa-delivery</title>
+    <title>منصة الشجاع للتوصيل السريع</title>
+    
+    <!-- إعدادات الـ PWA والألوان -->
     <link rel="manifest" href="/manifest.json" />
-<meta name="theme-color" content="#1e40af" />
+    <meta name="theme-color" content="#1e40af" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="منصة الشجاع" />
 
-<script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js');
-    });
-  }
-</script>
+    <!-- تسجيل Service Worker مع المزامنة الدورية -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', async () => {
+          try {
+            const reg = await navigator.serviceWorker.register('/sw.js');
 
+            // تفعيل المزامنة الدورية للشحنات في الخلفية
+            if ('periodicSync' in reg) {
+              try {
+                const status = await navigator.permissions.query({
+                  name: 'periodic-background-sync',
+                });
+                if (status.state === 'granted') {
+                  await reg.periodicSync.register('sync-shipments', {
+                    minInterval: 12 * 60 * 60 * 1000, // كل 12 ساعة
+                  });
+                }
+              } catch (permErr) {
+                // محاولة التسجيل المباشر إن كان التطبيق مثبتاً كـ PWA
+                try {
+                  await reg.periodicSync.register('sync-shipments', {
+                    minInterval: 12 * 60 * 60 * 1000,
+                  });
+                } catch (e) {}
+              }
+            }
+          } catch (err) {
+            console.error('فشل تسجيل Service Worker:', err);
+          }
+        });
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
