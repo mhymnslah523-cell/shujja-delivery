@@ -1,66 +1,56 @@
 {
-  "id": "/",
-  "short_name": "الشجاع",
   "name": "منصة الشجاع للتوصيل السريع",
-  "description": "منظومة متكاملة لإدارة وتتبع الشحنات وعمليات التوصيل السريع",
-  "start_url": "/",
+  "short_name": "الشجاع",
+  "description": "منصة إدارة وتتبع شحنات التوصيل السريع",
+  "start_url": "/?source=pwa",
   "scope": "/",
-  "background_color": "#ffffff",
-  "theme_color": "#1e40af",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
-  "orientation": "portrait",
-  "dir": "rtl",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#ffffff",
+  "theme_color": "#facc15",
   "lang": "ar",
-  "categories": ["business", "productivity", "utilities"],
+  "dir": "rtl",
+  "categories": ["business", "logistics", "productivity"],
   "prefer_related_applications": false,
   "related_applications": [],
   "launch_handler": {
-    "client_mode": "navigate-existing"
+    "client_mode": "auto"
   },
-  "shortcuts": [
-    {
-      "name": "لوحة الشحنات",
-      "short_name": "الشحنات",
-      "description": "عرض وإدارة الشحنات الحالية",
-      "url": "/",
-      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
-    }
-  ],
   "icons": [
     {
       "src": "/icon-192.png",
-      "type": "image/png",
       "sizes": "192x192",
-      "purpose": "any"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
       "src": "/icon-512.png",
-      "type": "image/png",
       "sizes": "512x512",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon-512.png",
       "type": "image/png",
-      "sizes": "512x512",
-      "purpose": "maskable"
+      "purpose": "any maskable"
     }
   ],
   "screenshots": [
     {
       "src": "/screenshot.png",
-      "type": "image/png",
       "sizes": "540x720",
+      "type": "image/png",
       "form_factor": "narrow",
-      "label": "واجهة الهاتف الذكي"
+      "label": "واجهة الهاتف"
     },
     {
       "src": "/screenshot-wide.png",
-      "type": "image/png",
       "sizes": "1280x720",
+      "type": "image/png",
       "form_factor": "wide",
-      "label": "واجهة أجهزة الحاسوب"
+      "label": "واجهة سطح المكتب"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "لوحة التحكم",
+      "url": "/",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }
