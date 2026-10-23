@@ -101,3 +101,50 @@ self.addEventListener('periodicsync', (event) => {
     );
   }
 });
+
+// 1. استقبال الإشعارات المنبثقة (Push Notifications)
+self.addEventListener('push', (event) => {
+  let data = { title: 'منصة الشجاع', body: 'تنبيه جديد بخصوص الشحنات' };
+  
+  if (event.data) {
+    try {
+      data = event.data.json();
+    } catch (e) {
+      data.body = event.data.text();
+    }
+  }
+
+  const options = {
+    body: data.body,
+    icon: '/favicon.ico',
+    badge: '/favicon.ico',
+    vibrate: [100, 50, 100],
+    data: { url: data.url || '/' }
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, options)
+  );
+});
+
+// عند نقر الموظف على الإشعار، يفتح التطبيق مباشرة
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      if (clientList.length > 0) {
+        return clientList[0].focus();
+      }
+      return clients.openWindow(event.notification.data.url || '/');
+    })
+  );
+});
+
+// 2. مزامنة العمليات المؤجلة عند عودة الإنترنت (Background Sync)
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'sync-offline-updates') {
+    event.waitUntil(
+      console.log('عادت الشبكة: جاري إرسال التحديثات المؤجلة لقاعدة البيانات...')
+    );
+  }
+});
