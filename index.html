@@ -6,22 +6,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>منصة الشجاع للتوصيل السريع</title>
     
-    <!-- إعدادات الـ PWA والألوان -->
+    <!-- إعدادات الـ PWA -->
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#1e40af" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="منصة الشجاع" />
 
-    <!-- تسجيل Service Worker مع المزامنة الدورية -->
+    <!-- تسجيل Service Worker مع Background Sync و Periodic Sync -->
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', async () => {
           try {
             const reg = await navigator.serviceWorker.register('/sw.js');
+            
+            // 1. تسجيل Background Sync فوراً
+            if ('sync' in reg) {
+              try {
+                await reg.sync.register('sync-offline-updates');
+              } catch (e) {}
+            }
 
-            // تفعيل المزامنة الدورية للشحنات في الخلفية
+            // 2. تفعيل المزامنة الدورية للشحنات (Periodic Sync)
             if ('periodicSync' in reg) {
               try {
                 const status = await navigator.permissions.query({
@@ -29,11 +36,10 @@
                 });
                 if (status.state === 'granted') {
                   await reg.periodicSync.register('sync-shipments', {
-                    minInterval: 12 * 60 * 60 * 1000, // كل 12 ساعة
+                    minInterval: 12 * 60 * 60 * 1000,
                   });
                 }
               } catch (permErr) {
-                // محاولة التسجيل المباشر إن كان التطبيق مثبتاً كـ PWA
                 try {
                   await reg.periodicSync.register('sync-shipments', {
                     minInterval: 12 * 60 * 60 * 1000,
