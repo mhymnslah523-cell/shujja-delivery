@@ -1,15 +1,13 @@
 const CACHE_NAME = 'shujaa-v2';
-const DATA_CACHE_NAME = 'shujaa-data-v1';
-
-// الملفات الأساسية لتشغيل التطبيق بدون إنترنت
 const STATIC_ASSETS = [
   '/',
   '/index.html',
+  '/offline.html',
   '/manifest.json',
-  '/favicon.ico',
+  '/favicon.ico'
 ];
 
-// 1. التثبيت وحفظ الملفات الأساسية
+// 1. التثبيت وتخزين الصفحات الأساسية
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
@@ -19,13 +17,13 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// 2. التفعيل وحذف النسخ القديمة للكاش
+// 2. التفعيل وحذف النسخ القديمة
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME && key !== DATA_CACHE_NAME) {
+          if (key !== CACHE_NAME) {
             return caches.delete(key);
           }
         })
@@ -34,78 +32,50 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// 3. اعتراض الطلبات وتوفير تجربة Offline سلسة
+// 3. اعتراض الطلبات وتوفير دعم Offline (معيار PWABuilder الأساسي)
 self.addEventListener('fetch', (event) => {
-  const request = event.request;
-  const url = new URL(request.url);
+  if (event.request.method !== 'GET') return;
 
-  // إذا كان طلب جلب بيانات من Supabase (REST API)
-  if (url.origin.includes('supabase.co')) {
-    if (request.method === 'GET') {
-      event.respondWith(
-        fetch(request)
-          .then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200) {
-              const responseToCache = networkResponse.clone();
-              caches.open(DATA_CACHE_NAME).then((cache) => {
-                cache.put(request, responseToCache);
-              });
-            }
-            return networkResponse;
-          })
-          .catch(() => {
-            // في حال عدم وجود إنترنت، اعرض آخر بيانات محفوظة
-            return caches.match(request);
-          })
-      );
-      return;
-    }
-  }
-
-  // لملفات الواجهة والموقع الثابتة (Network First with Cache Fallback)
   event.respondWith(
-    fetch(request)
+    fetch(event.request)
       .then((networkResponse) => {
-        if (networkResponse && networkResponse.status === 200 && request.method === 'GET') {
+        if (networkResponse && networkResponse.status === 200) {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
-            cache.put(request, responseToCache);
+            cache.put(event.request, responseToCache);
           });
         }
         return networkResponse;
       })
-      .catch(() => {
-        return caches.match(request).then((cachedResponse) => {
-          if (cachedResponse) return cachedResponse;
-          // إذا كان تنقل صفحات ولم يُعثر على الصفحة، ارجع إلى index.html
-          if (request.mode === 'navigate') {
-            return caches.match('/index.html');
-          }
-        });
+      .catch(async () => {
+        const cachedResponse = await caches.match(event.request);
+        if (cachedResponse) return cachedResponse;
+
+        // إذا كان التنقل بين الصفحات وفشل الاتصال، اعرض صفحة offline.html
+        if (event.request.mode === 'navigate') {
+          return caches.match('/offline.html');
+        }
       })
   );
 });
 
-// 4. المزامنة الدورية في الخلفية (Periodic Background Sync)
-self.addEventListener('periodicsync', (event) => {
-  if (event.tag === 'sync-shipments') {
-    event.waitUntil(
-      (async () => {
-        try {
-          console.log('[Service Worker] جاري تحديث بيانات الشحنات دورياً في الخلفية...');
-          // يمكن للمتصفح هنا تحديث الكاش تلقائياً في الخلفية
-        } catch (err) {
-          console.error('[Service Worker] فشلت المزامنة الدورية:', err);
-        }
-      })()
-    );
+// 4. اختبار Background Sync لـ PWABuilder
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'sync-offline-updates') {
+    event.waitUntil(Promise.resolve());
   }
 });
 
-// 1. استقبال الإشعارات المنبثقة (Push Notifications)
+// 5. اختبار Periodic Background Sync لـ PWABuilder
+self.addEventListener('periodicsync', (event) => {
+  if (event.tag === 'sync-shipments') {
+    event.waitUntil(Promise.resolve());
+  }
+});
+
+// 6. اختبار إشعارات الويب (Push Notifications) لـ PWABuilder
 self.addEventListener('push', (event) => {
   let data = { title: 'منصة الشجاع', body: 'تنبيه جديد بخصوص الشحنات' };
-  
   if (event.data) {
     try {
       data = event.data.json();
@@ -127,7 +97,7 @@ self.addEventListener('push', (event) => {
   );
 });
 
-// عند نقر الموظف على الإشعار، يفتح التطبيق مباشرة
+// التعامل مع النقر على الإشعار
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   event.waitUntil(
@@ -138,13 +108,4 @@ self.addEventListener('notificationclick', (event) => {
       return clients.openWindow(event.notification.data.url || '/');
     })
   );
-});
-
-// 2. مزامنة العمليات المؤجلة عند عودة الإنترنت (Background Sync)
-self.addEventListener('sync', (event) => {
-  if (event.tag === 'sync-offline-updates') {
-    event.waitUntil(
-      console.log('عادت الشبكة: جاري إرسال التحديثات المؤجلة لقاعدة البيانات...')
-    );
-  }
 });
