@@ -2,14 +2,31 @@
   "id": "/",
   "short_name": "الشجاع",
   "name": "منصة الشجاع للتوصيل السريع",
-  "description": "منظومة إدارة وتتبع الشحنات والطرود",
+  "description": "منظومة متكاملة لإدارة وتتبع الشحنات وعمليات التوصيل السريع",
   "start_url": "/",
+  "scope": "/",
   "background_color": "#ffffff",
   "theme_color": "#1e40af",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "portrait",
   "dir": "rtl",
   "lang": "ar",
+  "categories": ["business", "productivity", "utilities"],
+  "prefer_related_applications": false,
+  "related_applications": [],
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
+  "shortcuts": [
+    {
+      "name": "لوحة الشحنات",
+      "short_name": "الشحنات",
+      "description": "عرض وإدارة الشحنات الحالية",
+      "url": "/",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
   "icons": [
     {
       "src": "/icon-192.png",
@@ -35,7 +52,15 @@
       "src": "/screenshot.png",
       "type": "image/png",
       "sizes": "540x720",
-      "form_factor": "narrow"
+      "form_factor": "narrow",
+      "label": "واجهة الهاتف الذكي"
+    },
+    {
+      "src": "/screenshot-wide.png",
+      "type": "image/png",
+      "sizes": "1280x720",
+      "form_factor": "wide",
+      "label": "واجهة أجهزة الحاسوب"
     }
   ]
 }
