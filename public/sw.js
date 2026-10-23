@@ -2,37 +2,31 @@ const CACHE_NAME = 'shujaa-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/offline.html',
-  '/manifest.json',
-  '/favicon.ico'
+  '/manifest.json'
 ];
 
-// 1. التثبيت وتخزين الصفحات الأساسية
+// 1. التثبيت
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
   );
   self.skipWaiting();
 });
 
-// 2. التفعيل وحذف النسخ القديمة
+// 2. التفعيل
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
+    caches.keys().then((keys) =>
+      Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME) {
-            return caches.delete(key);
-          }
+          if (key !== CACHE_NAME) return caches.delete(key);
         })
-      );
-    }).then(() => clients.claim())
+      )
+    ).then(() => clients.claim())
   );
 });
 
-// 3. اعتراض الطلبات وتوفير دعم Offline (معيار PWABuilder الأساسي)
+// 3. اعتراض الطلبات وتوفير تجربة Offline (متطلب أساسي لبناء الـ APK)
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
@@ -51,29 +45,28 @@ self.addEventListener('fetch', (event) => {
         const cachedResponse = await caches.match(event.request);
         if (cachedResponse) return cachedResponse;
 
-        // إذا كان التنقل بين الصفحات وفشل الاتصال، اعرض صفحة offline.html
         if (event.request.mode === 'navigate') {
-          return caches.match('/offline.html');
+          return caches.match('/index.html');
         }
       })
   );
 });
 
-// 4. اختبار Background Sync لـ PWABuilder
+// 4. Background Sync (محلول بـ Promise صالح لعدم رمي أخطاء)
 self.addEventListener('sync', (event) => {
   if (event.tag === 'sync-offline-updates') {
     event.waitUntil(Promise.resolve());
   }
 });
 
-// 5. اختبار Periodic Background Sync لـ PWABuilder
+// 5. Periodic Background Sync
 self.addEventListener('periodicsync', (event) => {
   if (event.tag === 'sync-shipments') {
     event.waitUntil(Promise.resolve());
   }
 });
 
-// 6. اختبار إشعارات الويب (Push Notifications) لـ PWABuilder
+// 6. Push Notifications
 self.addEventListener('push', (event) => {
   let data = { title: 'منصة الشجاع', body: 'تنبيه جديد بخصوص الشحنات' };
   if (event.data) {
@@ -84,27 +77,21 @@ self.addEventListener('push', (event) => {
     }
   }
 
-  const options = {
-    body: data.body,
-    icon: '/favicon.ico',
-    badge: '/favicon.ico',
-    vibrate: [100, 50, 100],
-    data: { url: data.url || '/' }
-  };
-
   event.waitUntil(
-    self.registration.showNotification(data.title, options)
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      data: { url: '/' }
+    })
   );
 });
 
-// التعامل مع النقر على الإشعار
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      if (clientList.length > 0) {
-        return clientList[0].focus();
-      }
+      if (clientList.length > 0) return clientList[0].focus();
       return clients.openWindow(event.notification.data.url || '/');
     })
   );
