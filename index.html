@@ -6,9 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>منصة الشجاع للتوصيل السريع</title>
     
-    <!-- إعدادات الـ PWA -->
+    <!-- وصف محركات البحث وSEO لمنع تنبيهات Lighthouse -->
+    <meta name="description" content="منصة الشجاع للتوصيل السريع - نظام ذكي لإدارة وتتبع الشحنات والمناديب وإدارة العمليات." />
+
+    <!-- إعدادات الـ PWA وتثبيت التطبيق -->
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#1e40af" />
+    <meta name="theme-color" content="#facc15" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -21,7 +24,7 @@
           try {
             const reg = await navigator.serviceWorker.register('/sw.js');
             
-            // 1. تسجيل Background Sync فوراً
+            // 1. تسجيل Background Sync لمزامنة التحديثات عند عودة الاتصال
             if ('sync' in reg) {
               try {
                 await reg.sync.register('sync-offline-updates');
