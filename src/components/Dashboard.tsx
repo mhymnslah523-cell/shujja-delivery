@@ -232,13 +232,13 @@ export function Dashboard() {
           .from("profiles")
           .select("*")
           .eq("id", user.id)
-          .single();
+          .maybeSingle();
 
         const { data: roleRow } = await supabase
           .from("user_roles")
           .select("role")
           .eq("user_id", user.id)
-          .single();
+          .maybeSingle();
 
         const rawRole = String(roleRow?.role || profile?.role || "courier").toLowerCase();
         let resolvedRole: UserRole = "courier";
@@ -1900,6 +1900,7 @@ export function Dashboard() {
 
                 <div className="flex items-center gap-2">
                   <select
+                    aria-label="اختيار المندوب لمعاينة الشحنات"
                     value={inspectedCourier}
                     onChange={(e) => setInspectedCourier(e.target.value)}
                     className="bg-slate-800 text-white border border-amber-400/60 rounded-xl px-3 py-1.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
@@ -2041,6 +2042,7 @@ export function Dashboard() {
                   {selectedIds.length > 0 && !isCourier && (
                     <div className="flex items-center gap-1 bg-white border border-amber-300 rounded-lg p-0.5 shadow-2xs">
                       <select
+                        aria-label="اختيار مندوب للتعيين الجماعي"
                         value={selectedBulkCourier}
                         onChange={(e) => setSelectedBulkCourier(e.target.value)}
                         className="text-xs border-0 rounded-md p-1 bg-transparent font-bold text-slate-800 focus:outline-none"
@@ -2079,6 +2081,7 @@ export function Dashboard() {
                   )}
                   {selectedIds.length > 0 && (
                     <select
+                      aria-label="تغيير حالة الشحنات المحددة"
                       onChange={(e) => {
                         if (e.target.value) handleUpdateStatus(e.target.value);
                       }}
@@ -2179,6 +2182,7 @@ export function Dashboard() {
                               <div className="flex items-center gap-2">
                                 <input
                                   type="checkbox"
+                                  aria-label={`تحديد الشحنة ${s.waybill_number || s.id}`}
                                   checked={isSelected}
                                   onChange={() => {
                                     setSelectedIds((prev) =>
@@ -2381,6 +2385,7 @@ export function Dashboard() {
                             <td className="p-3">
                               <input
                                 type="checkbox"
+                                aria-label={`تحديد الشحنة ${s.waybill_number || s.id}`}
                                 checked={isSelected}
                                 onChange={() => {
                                   setSelectedIds(prev => prev.includes(s.id) ? prev.filter(x => x !== s.id) : [...prev, s.id]);
@@ -2392,7 +2397,7 @@ export function Dashboard() {
                             <td className="p-3 font-semibold text-slate-800">{s.store_name}</td>
                             <td className="p-3">
                               <div className="font-semibold text-slate-800">{s.recipient_name}</div>
-                              <div className="text-[11px] text-slate-500 font-mono" dir="ltr">{s.recipient_phone}</div>
+                              <div className="text-[11px] text-slate-700 font-mono font-medium" dir="ltr">{s.recipient_phone}</div>
                             </td>
                             <td className="p-3">
                               <div className="flex items-center gap-1.5">
@@ -2405,7 +2410,7 @@ export function Dashboard() {
                                   {isBaghdad ? "داخلي" : "خارجي"}
                                 </span>
                               </div>
-                              <span className="text-slate-500 text-[11px] block">{s.area}</span>
+                              <span className="text-slate-700 text-[11px] block font-medium">{s.area}</span>
                             </td>
                             <td className="p-3 font-bold text-slate-900">{Number(s.amount).toLocaleString()} د.ع</td>
                             <td className="p-3 text-slate-600 font-semibold">{Number(s.delivery_fee || 5000).toLocaleString()} د.ع</td>
