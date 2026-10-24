@@ -235,8 +235,7 @@ export function ShipmentsTable({
 
     const csvContent =
       "data:text/csv;charset=utf-8,﻿" +
-      [headers.join(","), ...rows.map((r) => r.join(","))].join("
-");
+      [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
