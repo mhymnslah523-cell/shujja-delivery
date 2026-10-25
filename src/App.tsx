@@ -25,32 +25,32 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-orange-400 font-bold" dir="rtl">
-        جارٍ تشغيل منظومة شجاع...
-      </div>
-    );
-  }
-
-  if (!session) {
-    return <LoginScreen onLoginSuccess={() => setLoading(false)} />;
-  }
-
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center text-orange-400 font-bold" dir="rtl">
-          جارٍ تحميل لوحة التحكم...
+    <div className="min-h-screen w-full bg-slate-950 text-slate-100 flex flex-col" dir="rtl" style={{ minHeight: "100vh" }}>
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center text-orange-400 font-bold" style={{ minHeight: "100vh" }}>
+          جارٍ تشغيل منظومة شجاع...
         </div>
-      }
-    >
-      <Dashboard
-        {...({
-          currentUser: { name: session.user.email ?? "المستخدم", role: "قائد المنظومة" },
-          onLogout: () => supabase.auth.signOut(),
-        } as any)}
-      />
-    </Suspense>
+      ) : !session ? (
+        <div className="w-full flex-1" style={{ minHeight: "100vh" }}>
+          <LoginScreen onLoginSuccess={() => setLoading(false)} />
+        </div>
+      ) : (
+        <Suspense
+          fallback={
+            <div className="flex-1 flex items-center justify-center text-orange-400 font-bold" style={{ minHeight: "100vh" }}>
+              جارٍ تحميل لوحة التحكم...
+            </div>
+          }
+        >
+          <Dashboard
+            {...({
+              currentUser: { name: session.user.email ?? "المستخدم", role: "قائد المنظومة" },
+              onLogout: () => supabase.auth.signOut(),
+            } as any)}
+          />
+        </Suspense>
+      )}
+    </div>
   );
 }
