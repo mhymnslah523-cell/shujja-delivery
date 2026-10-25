@@ -2,7 +2,6 @@ import { useEffect, useState, lazy, Suspense } from "react";
 import { supabase } from "./lib/supabase";
 import { LoginScreen } from "./components/LoginScreen";
 
-// استيراد Dashboard المسمى بشكل متوافق تماماً مع TypeScript
 const Dashboard = lazy(() =>
   import("./components/Dashboard").then((m: any) => ({
     default: m.Dashboard || m.default,
