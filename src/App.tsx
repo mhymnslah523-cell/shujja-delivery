@@ -1,7 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
 import { supabase } from "./lib/supabase";
 import { LoginScreen } from "./components/LoginScreen";
-import { Dashboard } from "./components/Dashboard";
+
+// استيراد Dashboard المسمى بشكل متوافق تماماً مع TypeScript
+const Dashboard = lazy(() =>
+  import("./components/Dashboard").then((m: any) => ({
+    default: m.Dashboard || m.default,
+  }))
+);
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -33,11 +39,19 @@ export default function App() {
   }
 
   return (
-    <Dashboard
-      {...({
-        currentUser: { name: session.user.email ?? "المستخدم", role: "قائد المنظومة" },
-        onLogout: () => supabase.auth.signOut(),
-      } as any)}
-    />
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-slate-950 flex items-center justify-center text-orange-400 font-bold" dir="rtl">
+          جارٍ تحميل لوحة التحكم...
+        </div>
+      }
+    >
+      <Dashboard
+        {...({
+          currentUser: { name: session.user.email ?? "المستخدم", role: "قائد المنظومة" },
+          onLogout: () => supabase.auth.signOut(),
+        } as any)}
+      />
+    </Suspense>
   );
 }
